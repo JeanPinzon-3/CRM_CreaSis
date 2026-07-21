@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Panel de Operaciones — Fallas, Despliegues e Incidentes</title>
+<link rel="stylesheet" href="styles.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+</head>
+<body>
+
+<div class="progress" id="progress"></div>
+
+<div class="topbar">
+  <div class="brand">
+    <div class="dot"></div>
+    <div>
+      <h1>Panel de <span>Operaciones</span></h1>
+      <small>Fallas de jobs · Despliegues · Escalamientos · Incidentes</small>
+    </div>
+  </div>
+  <div class="actions">
+    <button class="ghost" id="btnImport">⇪ Importar Excel(es)</button>
+    <input type="file" id="fileInput" accept=".xlsx,.xls" multiple>
+    <button class="ghost" id="btnExport">⇩ Exportar Excel (filtrado)</button>
+    <button class="ghost" id="btnReport">▤ Generar informe PDF</button>
+    <button class="primary" id="btnNew">+ Nuevo registro</button>
+    <button class="ghost danger" id="btnClear">Vaciar todo</button>
+  </div>
+</div>
+
+<main>
+  <div class="stats" id="stats"></div>
+
+  <div class="analysis">
+    <div class="chart-panel">
+      <h2>Fallas por servidor / instancia</h2>
+      <div class="sub">Top servidores con más registros en estado "Fallido"</div>
+      <div id="chartServidor"></div>
+    </div>
+    <div class="chart-panel">
+      <h2>Tiempo promedio por responsable</h2>
+      <div class="sub">Minutos promedio de atención, por responsable</div>
+      <div id="chartResponsable"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Registros</h2>
+      <div class="filters">
+        <input type="text" id="search" placeholder="Buscar proceso, servidor, responsable...">
+        <select id="filterEstado">
+          <option value="">Todos los estados</option>
+          <option value="Exitoso">Exitoso</option>
+          <option value="Fallido">Fallido</option>
+          <option value="Pendiente">Pendiente</option>
+          <option value="Otro">Otro</option>
+        </select>
+        <select id="filterTipo"><option value="">Todos los tipos</option></select>
+        <select id="filterOrigen"><option value="">Todos los archivos</option></select>
+      </div>
+    </div>
+    <div id="tableWrap"></div>
+  </div>
+
+  <p class="hint">
+    <b>Cómo funciona:</b> los datos viven en esta pestaña mientras la usas — no hay servidor detrás.
+    Puedes seleccionar <b>varios archivos Excel a la vez</b>; el panel revisa todas las hojas de cada libro y toma automáticamente las que parecen bitácoras de registros (fecha, servidor, job, responsable, estado, escalamiento, tiempo...), ignorando hojas de calendario o versionamiento vacías.
+    Las tarjetas, los gráficos y la tabla <b>responden a los filtros</b> de arriba (búsqueda, estado, tipo, archivo). Usa <b>Exportar Excel</b> para descargar lo que esté filtrado en pantalla, o <b>Generar informe PDF</b> para un resumen listo para compartir con tu supervisor.
+    Cualquier columna del Excel que no encaje en los campos principales se conserva en <b>"Info. adicional"</b> — nada se descarta. Si dudas de si una columna se leyó bien, usa el botón <b>"Ver original"</b> en cada fila para ver exactamente lo que el navegador leyó de esa celda en Excel.
+  </p>
+</main>
+
+<div class="overlay" id="overlay">
+  <div class="modal">
+    <h3 id="modalTitle">Nuevo registro</h3>
+    <form id="regForm">
+      <input type="hidden" id="regId">
+      <div class="field">
+        <label>Proceso / Job / Aplicación</label>
+        <input type="text" id="f_proceso" required>
+      </div>
+      <div class="two-col">
+        <div class="field">
+          <label>Servidor / Instancia</label>
+          <input type="text" id="f_servidor">
+        </div>
+        <div class="field">
+          <label>Responsable</label>
+          <input type="text" id="f_responsable">
+        </div>
+      </div>
+      <div class="two-col">
+        <div class="field">
+          <label>Estado</label>
+          <select id="f_estado">
+            <option>Exitoso</option>
+            <option>Fallido</option>
+            <option>Pendiente</option>
+            <option>Otro</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Escalamiento</label>
+          <select id="f_escalamiento">
+            <option>No</option>
+            <option>Sí</option>
+          </select>
+        </div>
+      </div>
+      <div class="two-col">
+        <div class="field">
+          <label>Fecha</label>
+          <input type="date" id="f_fecha">
+        </div>
+        <div class="field">
+          <label>Tiempo (min)</label>
+          <input type="number" id="f_tiempo" min="0" step="1">
+        </div>
+      </div>
+      <div class="field">
+        <label>Tipo</label>
+        <input type="text" id="f_tipo" placeholder="Ej: Falla de Job, Despliegue, Cierre Mensual...">
+      </div>
+      <div class="field">
+        <label>Diagnóstico / Observaciones</label>
+        <textarea id="f_diagnostico"></textarea>
+      </div>
+      <div class="field">
+        <label>Acción / Resultado</label>
+        <textarea id="f_accion"></textarea>
+      </div>
+      <div class="field">
+        <label>Información adicional (otras columnas del Excel, listas de selección múltiple, etc.)</label>
+        <textarea id="f_extra"></textarea>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="ghost" id="btnCancel">Cancelar</button>
+        <button type="submit" class="primary">Guardar</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="overlay" id="rawOverlay">
+  <div class="modal wide">
+    <h3>Datos originales leídos del Excel</h3>
+    <p class="modal-sub">Esto es exactamente lo que el navegador leyó de esa fila, columna por columna, sin ningún procesamiento. Si una columna no aparece aquí, es que la celda estaba vacía en el archivo original.</p>
+    <div id="rawContent"></div>
+    <div class="modal-actions">
+      <button type="button" class="ghost" id="btnCloseRaw">Cerrar</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

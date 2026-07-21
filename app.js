@@ -1,0 +1,702 @@
+// =======================================================================
+// Panel de Operaciones — lógica de la aplicación
+// =======================================================================
+
+let registros = [];
+let nextNum = 1;
+const el = id => document.getElementById(id);
+
+function genId(){ return 'REG-' + String(nextNum++).padStart(5,'0'); }
+
+function normalizeHeader(h){
+  return String(h).toLowerCase().replace(/[\n\r]+/g,' ').replace(/\s+/g,' ').trim();
+}
+
+function excelSerialToDate(n){
+  // Convierte un número serial de Excel (celda de fecha con formato no
+  // estándar que SheetJS no reconoció como Date) a un objeto Date.
+  const utcDays = Math.floor(n - 25569);
+  const utcValue = utcDays * 86400;
+  return new Date(utcValue * 1000);
+}
+
+function toDateString(v){
+  if(v === undefined || v === null || v === '') return '';
+  if(v instanceof Date && !isNaN(v)) return v.toISOString().slice(0,10);
+  // Número serial de Excel (rango razonable: años ~1950-2100) que no fue
+  // convertido a Date automáticamente por algún formato de celda atípico.
+  if(typeof v === 'number' && v > 18000 && v < 73050){
+    const d = excelSerialToDate(v);
+    if(!isNaN(d)) return d.toISOString().slice(0,10);
+  }
+  const s = String(v).trim();
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(m) return m[0];
+  const m2 = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if(m2) return `${m2[3]}-${String(m2[1]).padStart(2,'0')}-${String(m2[2]).padStart(2,'0')}`;
+  return s.slice(0,10);
+}
+
+function parseNumberLoose(v){
+  // Acepta "12", "12.5", "12,5" (coma decimal) y "1.234,56" / "1,234.56"
+  // (separador de miles) sin confundirlos.
+  if(typeof v === 'number') return v;
+  let s = String(v).trim();
+  if(s === '') return NaN;
+  const hasComma = s.includes(','), hasDot = s.includes('.');
+  if(hasComma && hasDot){
+    // El último separador que aparece es el decimal; el otro es de miles.
+    if(s.lastIndexOf(',') > s.lastIndexOf('.')) s = s.replace(/\./g,'').replace(',', '.');
+    else s = s.replace(/,/g,'');
+  } else if(hasComma){
+    s = s.replace(',', '.');
+  }
+  return parseFloat(s);
+}
+
+function inferTipo(sheetName, fileName){
+  const s = (sheetName + ' ' + fileName).toLowerCase();
+  if(s.includes('falla')) return 'Falla de Job';
+  if(s.includes('control_pasos') || s.includes('paso')) return 'Despliegue';
+  if(s.includes('cierre')) return 'Cierre Mensual';
+  if(s.includes('graffana') || s.includes('grafana')) return 'Incidente Monitoreo';
+  if(s.includes('abs')) return 'Incidente ABS';
+  if(s.includes('version')) return 'Versionamiento';
+  return 'Registro';
+}
+
+const LOG_KEYWORDS = ['fecha','servidor','instancia','job','proceso','responsable','operador',
+  'estado','resultado','diagnostico','escalamiento','cliente','incidente','reportado',
+  'asunto','tiempo','solicitud','observaciones','aplicaci'];
+
+function countKeywordMatches(headerTexts){
+  const headerSet = new Set(headerTexts.map(normalizeHeader).filter(Boolean));
+  let matches = 0;
+  for(const kw of LOG_KEYWORDS){
+    for(const h of headerSet){ if(h.includes(kw)){ matches++; break; } }
+  }
+  return matches;
+}
+
+// Detecta si una hoja del Excel "parece" una bitácora de registros
+// (fecha + servidor/job/responsable/estado...) en vez de un calendario,
+// resumen dinámico u hoja de referencia.
+function isLogSheet(rows){
+  if(!rows.length) return false;
+  return countKeywordMatches(rows.slice(0,5).flatMap(r=>Object.keys(r))) >= 2;
+}
+
+// Convierte una hoja de SheetJS en una lista de objetos fila->valor,
+// resolviendo dos problemas comunes de Excel que hacían que se perdiera
+// información al importar:
+//
+// 1) CELDAS COMBINADAS: SheetJS solo pone el valor en la celda superior-
+//    izquierda del rango combinado; el resto queda vacío. Aquí se "rellena"
+//    el valor combinado en todas las celdas del rango antes de armar las
+//    filas, para que no se pierdan fechas/servidores que abarcan varias
+//    filas.
+// 2) ENCABEZADO NO ESTÁ EN LA FILA 1: si hay filas de título/logo antes de
+//    los encabezados reales, se busca entre las primeras 15 filas cuál es
+//    la que más coincide con palabras clave de bitácora, en vez de asumir
+//    siempre la fila 1.
+// 3) ENCABEZADOS DUPLICADOS: si dos columnas tienen el mismo nombre, se
+//    distinguen agregando la letra de columna de Excel, para que ninguna
+//    se sobrescriba.
+function sheetToRows(sheet){
+  const aoa = XLSX.utils.sheet_to_json(sheet, {header:1, defval:''});
+  if(!aoa.length) return { rows:[], headerRow:-1 };
+
+  // Rellenar celdas combinadas con el valor de la celda superior-izquierda.
+  const merges = sheet['!merges'] || [];
+  merges.forEach(m=>{
+    if(!aoa[m.s.r]) return;
+    const val = aoa[m.s.r][m.s.c];
+    if(val === undefined || val === '') return;
+    for(let r=m.s.r; r<=m.e.r; r++){
+      if(!aoa[r]) aoa[r] = [];
+      for(let c=m.s.c; c<=m.e.c; c++){
+        if(aoa[r][c] === undefined || aoa[r][c] === '') aoa[r][c] = val;
+      }
+    }
+  });
+
+  // Buscar la fila de encabezado real entre las primeras 15 filas.
+  // Se exige que existan al menos 2 coincidencias de palabras clave Y que
+  // una de ellas sea "fecha": esto evita que hojas de referencia/listas
+  // desplegables (que reutilizan nombres de columna como RESULTADO,
+  // RESPONSABLE, AMBIENTE, pero no tienen fecha) se confundan con una
+  // bitácora real.
+  const searchLimit = Math.min(aoa.length, 15);
+  let headerRow = 0, bestScore = -1;
+  for(let i=0; i<searchLimit; i++){
+    const texts = (aoa[i]||[]).map(v=>String(v||''));
+    const hasFecha = texts.some(t=>normalizeHeader(t).includes('fecha'));
+    const score = hasFecha ? countKeywordMatches(texts) : -1;
+    if(score > bestScore){ bestScore = score; headerRow = i; }
+  }
+  if(bestScore < 2) return { rows:[], headerRow:-1 }; // no parece bitácora
+
+  const headerCells = aoa[headerRow] || [];
+  const seen = new Map();
+  const headers = headerCells.map((h,c)=>{
+    let name = String(h||'').trim();
+    if(!name) name = 'Columna ' + XLSX.utils.encode_col(c);
+    if(seen.has(name)){
+      const n = seen.get(name) + 1;
+      seen.set(name, n);
+      name = name + ' (col ' + XLSX.utils.encode_col(c) + ')';
+    } else {
+      seen.set(name, 0);
+    }
+    return name;
+  });
+
+  const CORE_KEYWORDS = ['fecha','nombre aplicaci','nombre job','nombre reporte','asunto'];
+  const rows = [];
+  for(let r=headerRow+1; r<aoa.length; r++){
+    const line = aoa[r];
+    if(!line) continue;
+    const obj = {};
+    let hasCoreContent = false;
+    headers.forEach((h,c)=>{
+      const v = line[c] !== undefined ? line[c] : '';
+      obj[h] = v;
+      if(String(v).trim() !== ''){
+        const nh = normalizeHeader(h);
+        if(CORE_KEYWORDS.some(kw=>nh.includes(kw))) hasCoreContent = true;
+      }
+    });
+    // Filas de plantilla sin usar (comunes en formatos de Excel prellenados
+    // con valores por defecto como "0" en columnas de conteo) se descartan:
+    // solo se importan filas que sí tengan fecha o un proceso/job real.
+    if(hasCoreContent) rows.push(obj);
+  }
+  return { rows, headerRow };
+}
+
+// Convierte una fila cruda del Excel (objeto columna->valor tal como la
+// entrega SheetJS) en un registro del panel. Cualquier columna que no
+// encaje en los campos conocidos (incluyendo listas desplegables de
+// selección múltiple con nombres personalizados) se conserva íntegra en
+// `extra`, y la fila completa sin tocar se guarda en `raw` para poder
+// inspeccionarla con el botón "Ver original".
+function rowToRegistro(row, sheetName, fileName){
+  const usedKeys = new Set();
+
+  function pick(keywords){
+    const keys = Object.keys(row);
+    for(const kw of keywords){
+      for(const k of keys){
+        if(usedKeys.has(k)) continue;
+        if(normalizeHeader(k).includes(kw)){
+          const v = row[k];
+          if(v !== undefined && v !== null && String(v).trim() !== ''){
+            usedKeys.add(k);
+            return v;
+          }
+        }
+      }
+    }
+    return '';
+  }
+
+  const fecha = toDateString(pick(['fecha imp','fecha sol','fecha']));
+  const proceso = String(pick(['nombre aplicaci','nombre job','nombre reporte','asunto','proceso','job']) || 'Sin nombre');
+  const servidor = String(pick(['servidor','ambiente','instancia']));
+  const responsable = String(pick(['responsable','operador','resp.','reportado por']));
+
+  const estadoRaw = String(pick(['estado final','estado','resultado']));
+  const estadoLower = estadoRaw.toLowerCase();
+  let estado = 'Otro';
+  if(estadoLower.includes('exito')) estado = 'Exitoso';
+  else if(estadoLower.includes('fall')) estado = 'Fallido';
+  else if(estadoLower.includes('pendient')) estado = 'Pendiente';
+
+  // Escalamiento: puede haber varias columnas "ESCALAMIENTO..."; se marcan
+  // todas como usadas y basta que UNA tenga SI para marcar el registro
+  // como escalado.
+  let escalamiento = 'No';
+  Object.keys(row).forEach(k=>{
+    if(usedKeys.has(k)) return;
+    if(normalizeHeader(k).includes('escalamiento')){
+      usedKeys.add(k);
+      const v = String(row[k]).trim().toLowerCase();
+      if(v === 'si' || v === 'sí') escalamiento = 'Sí';
+    }
+  });
+
+  // Tiempo: se prioriza calcular la duración real a partir de columnas de
+  // "hora inicio" / "hora final" (ej. H. INICIO / H. FINAL), en vez de
+  // confiar en una columna de fórmula tipo "T.DESPLIEGUE": en archivos
+  // reales esa columna suele venir desactualizada o sin fórmula en algunas
+  // filas, mientras que inicio/final casi siempre son datos capturados a
+  // mano y por lo tanto más confiables.
+  let tiempo = '';
+  {
+    const keys = Object.keys(row);
+    let inicioKey = null, finalKey = null;
+    for(const k of keys){
+      const h = normalizeHeader(k);
+      if(inicioKey===null && (h.includes('hora inicio') || h.includes('h. inicio') || h.includes('h.inicio') || /(^|\s)inicio(\s|$)/.test(h))) inicioKey = k;
+      if(finalKey===null && (h.includes('hora final') || h.includes('h. final') || h.includes('h.final') || /(^|\s)final(\s|$)/.test(h) || /(^|\s)termino(\s|$)/.test(h))) finalKey = k;
+    }
+    if(inicioKey && finalKey){
+      const vIni = parseNumberLoose(row[inicioKey]);
+      const vFin = parseNumberLoose(row[finalKey]);
+      if(!isNaN(vIni) && !isNaN(vFin) && vFin >= vIni){
+        tiempo = vFin - vIni;
+        usedKeys.add(inicioKey); usedKeys.add(finalKey);
+      }
+    }
+  }
+  if(tiempo === ''){
+    for(const k of Object.keys(row)){
+      if(usedKeys.has(k)) continue;
+      const h = normalizeHeader(k);
+      if(h.includes('tiempo') || h.includes('despliegue') || h.includes('duracion') || h.includes('demora') || h.includes('duración')){
+        const v = parseNumberLoose(row[k]);
+        if(!isNaN(v)){ tiempo = v; usedKeys.add(k); break; }
+      }
+    }
+  }
+
+  const tipoDirect = pick(['tipo solicitud','tipo']);
+  const tipo = tipoDirect ? String(tipoDirect) : inferTipo(sheetName, fileName);
+
+  const diagnostico = String(pick(['diagnostico','observaciones','accion a tomar']));
+  const accion = String(pick(['respuesta escalamiento','accion','resultado']));
+
+  // Cualquier columna que no se haya usado (incluye listas de selección
+  // múltiple, campos personalizados, etc.) se conserva aquí para no
+  // perder información.
+  const extraParts = [];
+  Object.keys(row).forEach(k=>{
+    if(usedKeys.has(k)) return;
+    const v = row[k];
+    if(v !== undefined && v !== null && String(v).trim() !== ''){
+      extraParts.push(String(k).trim() + ': ' + String(v).trim());
+    }
+  });
+
+  return {
+    id: genId(), fecha, proceso, servidor, responsable, estado, escalamiento, tiempo, tipo,
+    diagnostico, accion, extra: extraParts.join(' | '),
+    origen: fileName + ' · ' + sheetName,
+    raw: row, // fila 100% original, sin procesar, tal como la entregó SheetJS
+  };
+}
+
+function estadoClass(estado){
+  const map = {'Exitoso':'b-exitoso','Fallido':'b-fallido','Pendiente':'b-pendiente'};
+  return map[estado] || 'b-otro';
+}
+
+function escapeHtml(str){
+  const d = document.createElement('div');
+  d.textContent = str==null ? '' : String(str);
+  return d.innerHTML;
+}
+
+function uniqueValues(field){
+  return [...new Set(registros.map(r=>r[field]).filter(Boolean))].sort();
+}
+
+function refreshFilterOptions(){
+  const tipoSel = el('filterTipo'), origenSel = el('filterOrigen');
+  const curTipo = tipoSel.value, curOrigen = origenSel.value;
+  tipoSel.innerHTML = '<option value="">Todos los tipos</option>' +
+    uniqueValues('tipo').map(t=>`<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
+  origenSel.innerHTML = '<option value="">Todos los archivos</option>' +
+    uniqueValues('origen').map(o=>`<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`).join('');
+  tipoSel.value = curTipo; origenSel.value = curOrigen;
+}
+
+function getFilteredRegistros(){
+  const search = el('search').value.trim().toLowerCase();
+  const fEstado = el('filterEstado').value;
+  const fTipo = el('filterTipo').value;
+  const fOrigen = el('filterOrigen').value;
+  return registros.filter(r=>{
+    const matchSearch = !search || [r.proceso,r.servidor,r.responsable].join(' ').toLowerCase().includes(search);
+    const matchEstado = !fEstado || r.estado===fEstado;
+    const matchTipo = !fTipo || r.tipo===fTipo;
+    const matchOrigen = !fOrigen || r.origen===fOrigen;
+    return matchSearch && matchEstado && matchTipo && matchOrigen;
+  });
+}
+
+function activeFilterLabels(){
+  const labels = [];
+  if(el('search').value.trim()) labels.push('Búsqueda: "' + el('search').value.trim() + '"');
+  if(el('filterEstado').value) labels.push('Estado: ' + el('filterEstado').value);
+  if(el('filterTipo').value) labels.push('Tipo: ' + el('filterTipo').value);
+  if(el('filterOrigen').value) labels.push('Archivo: ' + el('filterOrigen').value);
+  return labels;
+}
+
+function renderStats(list){
+  const total = list.length;
+  const totalGeneral = registros.length;
+  const fallidos = list.filter(r=>r.estado==='Fallido').length;
+  const exitosos = list.filter(r=>r.estado==='Exitoso').length;
+  const escalados = list.filter(r=>r.escalamiento==='Sí').length;
+  const tiempos = list.map(r=>r.tiempo).filter(t=>typeof t === 'number');
+  const promedio = tiempos.length ? Math.round(tiempos.reduce((a,b)=>a+b,0)/tiempos.length) : 0;
+  const filtrado = total !== totalGeneral;
+
+  el('stats').innerHTML = `
+    <div class="stat total"><div class="n">${total}</div><div class="l">${filtrado ? 'Registros (filtrado)' : 'Total registros'}</div></div>
+    <div class="stat fallido"><div class="n">${fallidos}</div><div class="l">Fallidos</div></div>
+    <div class="stat exitoso"><div class="n">${exitosos}</div><div class="l">Exitosos</div></div>
+    <div class="stat escalado"><div class="n">${escalados}</div><div class="l">Con escalamiento</div></div>
+    <div class="stat tiempo"><div class="n">${promedio}</div><div class="l">Min. promedio</div></div>
+  `;
+}
+
+function renderTable(list){
+  if(list.length===0){
+    el('tableWrap').innerHTML = `<div class="empty"><b>No hay registros para mostrar</b>Importa uno o varios Excel, crea un registro nuevo, o ajusta los filtros.</div>`;
+    return;
+  }
+
+  const rows = list.map(r=>`
+    <tr>
+      <td class="mono-cell" data-label="ID">${r.id}</td>
+      <td data-label="Fecha">${r.fecha||'—'}</td>
+      <td data-label="Proceso/Job"><strong>${escapeHtml(r.proceso)}</strong></td>
+      <td data-label="Servidor">${escapeHtml(r.servidor||'—')}</td>
+      <td data-label="Responsable">${escapeHtml(r.responsable||'—')}</td>
+      <td data-label="Tipo">${escapeHtml(r.tipo)}</td>
+      <td data-label="Estado"><span class="badge ${estadoClass(r.estado)}">${r.estado}</span></td>
+      <td data-label="Escalamiento"><span class="${r.escalamiento==='Sí'?'esc-si':'esc-no'}">${r.escalamiento}</span></td>
+      <td data-label="Tiempo (min)">${r.tiempo!==''?r.tiempo:'—'}</td>
+      <td data-label="Info. adicional" class="cell-desc" title="${escapeHtml(r.extra||'')}">${r.extra ? escapeHtml(r.extra.slice(0,60)) + (r.extra.length>60?'…':'') : '—'}</td>
+      <td data-label="Origen" class="cell-origen">${escapeHtml(r.origen)}</td>
+      <td data-label="Acciones">
+        <div class="row-actions">
+          <button onclick="viewRaw('${r.id}')">Ver original</button>
+          <button onclick="editRegistro('${r.id}')">Editar</button>
+          <button onclick="deleteRegistro('${r.id}')">Eliminar</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+
+  el('tableWrap').innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th><th>Fecha</th><th>Proceso/Job</th><th>Servidor</th><th>Responsable</th>
+          <th>Tipo</th><th>Estado</th><th>Escalamiento</th><th>Tiempo</th><th>Info. adicional</th><th>Origen</th><th></th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+function renderBarChart(containerId, items, opts){
+  const container = el(containerId);
+  if(!items.length){
+    container.innerHTML = '<div class="chart-empty">No hay datos suficientes todavía.</div>';
+    return;
+  }
+  const max = Math.max(...items.map(i=>i.value));
+  container.innerHTML = items.map(i=>`
+    <div class="bar-row">
+      <div class="bar-label" title="${escapeHtml(i.label)}">${escapeHtml(i.label)}</div>
+      <div class="bar-track">
+        <div class="bar-fill ${opts.colorClass}" style="width:${max?Math.round(i.value/max*100):0}%"></div>
+      </div>
+      <div class="bar-value">${opts.suffix ? i.value+opts.suffix : i.value}</div>
+    </div>
+  `).join('');
+}
+
+function renderAnalysis(list){
+  // Fallas por servidor
+  const porServidor = {};
+  list.filter(r=>r.estado==='Fallido' && r.servidor).forEach(r=>{
+    porServidor[r.servidor] = (porServidor[r.servidor]||0) + 1;
+  });
+  const itemsServidor = Object.entries(porServidor)
+    .map(([label,value])=>({label,value}))
+    .sort((a,b)=>b.value-a.value)
+    .slice(0,8);
+  renderBarChart('chartServidor', itemsServidor, {colorClass:'c-danger'});
+
+  // Tiempo promedio por responsable
+  const tiemposPorResp = {};
+  list.filter(r=>r.responsable && typeof r.tiempo === 'number').forEach(r=>{
+    if(!tiemposPorResp[r.responsable]) tiemposPorResp[r.responsable] = [];
+    tiemposPorResp[r.responsable].push(r.tiempo);
+  });
+  const itemsResp = Object.entries(tiemposPorResp)
+    .map(([label,vals])=>({label, value:Math.round(vals.reduce((a,b)=>a+b,0)/vals.length)}))
+    .sort((a,b)=>b.value-a.value)
+    .slice(0,8);
+  renderBarChart('chartResponsable', itemsResp, {colorClass:'c-info', suffix:' min'});
+}
+
+function updateViews(){
+  const list = getFilteredRegistros();
+  renderStats(list);
+  renderAnalysis(list);
+  renderTable(list);
+}
+
+function renderAll(){ refreshFilterOptions(); updateViews(); }
+
+// --- Modal de edición / creación ---
+function openModal(reg){
+  el('modalTitle').textContent = reg ? 'Editar registro' : 'Nuevo registro';
+  el('regId').value = reg ? reg.id : '';
+  el('f_proceso').value = reg ? reg.proceso : '';
+  el('f_servidor').value = reg ? reg.servidor : '';
+  el('f_responsable').value = reg ? reg.responsable : '';
+  el('f_estado').value = reg ? reg.estado : 'Exitoso';
+  el('f_escalamiento').value = reg ? reg.escalamiento : 'No';
+  el('f_fecha').value = reg ? reg.fecha : '';
+  el('f_tiempo').value = reg ? reg.tiempo : '';
+  el('f_tipo').value = reg ? reg.tipo : '';
+  el('f_diagnostico').value = reg ? reg.diagnostico : '';
+  el('f_accion').value = reg ? reg.accion : '';
+  el('f_extra').value = reg ? (reg.extra || '') : '';
+  el('overlay').classList.add('open');
+}
+function closeModal(){ el('overlay').classList.remove('open'); }
+
+el('btnNew').onclick = () => openModal(null);
+el('btnCancel').onclick = closeModal;
+el('overlay').addEventListener('click', e => { if(e.target.id==='overlay') closeModal(); });
+
+el('regForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const id = el('regId').value;
+  const data = {
+    proceso: el('f_proceso').value.trim(),
+    servidor: el('f_servidor').value.trim(),
+    responsable: el('f_responsable').value.trim(),
+    estado: el('f_estado').value,
+    escalamiento: el('f_escalamiento').value,
+    fecha: el('f_fecha').value,
+    tiempo: el('f_tiempo').value ? parseFloat(el('f_tiempo').value) : '',
+    tipo: el('f_tipo').value.trim() || 'Registro',
+    diagnostico: el('f_diagnostico').value.trim(),
+    accion: el('f_accion').value.trim(),
+    extra: el('f_extra').value.trim(),
+  };
+  if(id){
+    const r = registros.find(x=>x.id===id);
+    Object.assign(r, data);
+  } else {
+    registros.push({ id: genId(), origen: 'Manual', ...data });
+  }
+  closeModal();
+  renderAll();
+});
+
+function editRegistro(id){ const r = registros.find(x=>x.id===id); if(r) openModal(r); }
+function deleteRegistro(id){
+  if(!confirm('¿Eliminar este registro?')) return;
+  registros = registros.filter(x=>x.id!==id);
+  renderAll();
+}
+
+// --- Modal "Ver original": muestra la fila 100% cruda tal como la leyó SheetJS ---
+function viewRaw(id){
+  const r = registros.find(x=>x.id===id);
+  if(!r) return;
+  const raw = r.raw;
+  if(!raw){
+    el('rawContent').innerHTML = '<div class="raw-empty">Este registro se creó manualmente en el panel, no proviene de un archivo Excel.</div>';
+  } else {
+    const entries = Object.entries(raw).filter(([k,v]) => v !== undefined && v !== null && String(v).trim() !== '');
+    if(entries.length === 0){
+      el('rawContent').innerHTML = '<div class="raw-empty">La fila no tenía ninguna celda con contenido.</div>';
+    } else {
+      el('rawContent').innerHTML = `
+        <table class="raw-table">
+          ${entries.map(([k,v]) => `
+            <tr>
+              <td class="raw-key">${escapeHtml(k)}</td>
+              <td class="raw-val">${escapeHtml(v instanceof Date ? v.toISOString() : v)}</td>
+            </tr>
+          `).join('')}
+        </table>
+      `;
+    }
+  }
+  el('rawOverlay').classList.add('open');
+}
+el('btnCloseRaw').onclick = () => el('rawOverlay').classList.remove('open');
+el('rawOverlay').addEventListener('click', e => { if(e.target.id==='rawOverlay') el('rawOverlay').classList.remove('open'); });
+
+['search','filterEstado','filterTipo','filterOrigen'].forEach(id=>{
+  el(id).addEventListener('input', updateViews);
+  el(id).addEventListener('change', updateViews);
+});
+
+el('btnClear').onclick = () => {
+  if(registros.length===0) return;
+  if(!confirm('Esto borrará todos los registros cargados. ¿Continuar?')) return;
+  registros = [];
+  renderAll();
+};
+
+// --- Import ---
+el('btnImport').onclick = () => el('fileInput').click();
+
+function readFileAsync(file){
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = evt => resolve(evt.target.result);
+    reader.onerror = reject;
+    reader.readAsBinaryString(file);
+  });
+}
+
+el('fileInput').addEventListener('change', async function(e){
+  const files = Array.from(e.target.files);
+  if(!files.length) return;
+  const progress = el('progress');
+  let done = 0;
+  let importedCount = 0;
+  const importedSheets = [];   // { archivo, hoja, filas }
+  const skippedSheets = [];    // { archivo, hoja, motivo }
+
+  for(const file of files){
+    try{
+      const bin = await readFileAsync(file);
+      const wb = XLSX.read(bin, {type:'binary', cellDates:true});
+      for(const sheetName of wb.SheetNames){
+        const sheet = wb.Sheets[sheetName];
+        const { rows } = sheetToRows(sheet);
+        if(!rows.length){
+          skippedSheets.push({archivo:file.name, hoja:sheetName, motivo:'no parece una bitácora de registros (no se encontró fila de encabezado reconocible)'});
+          continue;
+        }
+        let countThisSheet = 0;
+        rows.forEach(row => {
+          registros.push(rowToRegistro(row, sheetName, file.name));
+          importedCount++;
+          countThisSheet++;
+        });
+        importedSheets.push({archivo:file.name, hoja:sheetName, filas:countThisSheet});
+      }
+    }catch(err){
+      console.error('Error leyendo ' + file.name, err);
+      skippedSheets.push({archivo:file.name, hoja:'(todo el archivo)', motivo:'no se pudo leer el archivo — ¿es un Excel válido?'});
+    }
+    done++;
+    progress.style.width = (done/files.length*100) + '%';
+  }
+
+  setTimeout(()=>{ progress.style.width = '0%'; }, 500);
+  e.target.value = '';
+  renderAll();
+
+  // Resumen de la importación: siempre se informa qué se cargó y qué se
+  // omitió, para que sea fácil detectar si algo no entró como se esperaba.
+  console.log('Hojas importadas:', importedSheets);
+  console.log('Hojas omitidas:', skippedSheets);
+  if(importedCount===0){
+    alert('No se encontraron hojas con formato de bitácora reconocible en el/los archivo(s) seleccionado(s).\n\n' +
+      skippedSheets.map(s=>`• ${s.archivo} — "${s.hoja}": ${s.motivo}`).join('\n'));
+  } else if(skippedSheets.length > 0){
+    alert(`Se importaron ${importedCount} registros de ${importedSheets.length} hoja(s).\n\n` +
+      `Se omitieron ${skippedSheets.length} hoja(s) por no parecer bitácoras de registros:\n` +
+      skippedSheets.map(s=>`• ${s.archivo} — "${s.hoja}"`).join('\n') +
+      `\n\nSi alguna de estas SÍ debería haberse importado, revísala: puede que sus encabezados usen nombres muy distintos a los esperados (fecha, servidor, responsable, estado...).`);
+  }
+});
+
+// --- Export Excel (respeta filtros activos) ---
+el('btnExport').onclick = () => {
+  const list = getFilteredRegistros();
+  if(list.length===0){ alert('No hay registros para exportar con los filtros actuales.'); return; }
+  const data = list.map(r=>({
+    ID:r.id, Fecha:r.fecha, 'Proceso/Job':r.proceso, Servidor:r.servidor, Responsable:r.responsable,
+    Tipo:r.tipo, Estado:r.estado, Escalamiento:r.escalamiento, 'Tiempo (min)':r.tiempo,
+    Diagnostico:r.diagnostico, Accion:r.accion, 'Informacion adicional':r.extra||'', Origen:r.origen
+  }));
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Registros');
+  XLSX.writeFile(wb, 'panel_operaciones_' + new Date().toISOString().slice(0,10) + '.xlsx');
+};
+
+// --- Generar informe PDF (respeta filtros activos) ---
+el('btnReport').onclick = () => {
+  const list = getFilteredRegistros();
+  if(list.length===0){ alert('No hay registros para incluir en el informe con los filtros actuales.'); return; }
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation:'landscape', unit:'mm', format:'a4' });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const fecha = new Date().toLocaleDateString('es-CO', { year:'numeric', month:'long', day:'numeric' });
+
+  doc.setFont('helvetica','bold'); doc.setFontSize(16);
+  doc.text('Informe de Operaciones', 14, 16);
+  doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(100);
+  doc.text('Generado el ' + fecha, 14, 22);
+
+  const filtros = activeFilterLabels();
+  doc.text(filtros.length ? 'Filtros aplicados: ' + filtros.join(' · ') : 'Filtros aplicados: ninguno (todos los registros)', 14, 27);
+
+  // Resumen
+  const total = list.length;
+  const fallidos = list.filter(r=>r.estado==='Fallido').length;
+  const exitosos = list.filter(r=>r.estado==='Exitoso').length;
+  const escalados = list.filter(r=>r.escalamiento==='Sí').length;
+  const tiempos = list.map(r=>r.tiempo).filter(t=>typeof t === 'number');
+  const promedio = tiempos.length ? Math.round(tiempos.reduce((a,b)=>a+b,0)/tiempos.length) : 0;
+
+  doc.setTextColor(20); doc.setFont('helvetica','bold'); doc.setFontSize(11);
+  doc.text('Resumen', 14, 36);
+  doc.setFont('helvetica','normal'); doc.setFontSize(10);
+  doc.text(`Total: ${total}      Fallidos: ${fallidos}      Exitosos: ${exitosos}      Con escalamiento: ${escalados}      Tiempo promedio: ${promedio} min`, 14, 42);
+
+  // Top servidores con fallas
+  const porServidor = {};
+  list.filter(r=>r.estado==='Fallido' && r.servidor).forEach(r=>{ porServidor[r.servidor] = (porServidor[r.servidor]||0)+1; });
+  const topServidores = Object.entries(porServidor).sort((a,b)=>b[1]-a[1]).slice(0,5);
+
+  const tiemposPorResp = {};
+  list.filter(r=>r.responsable && typeof r.tiempo === 'number').forEach(r=>{
+    if(!tiemposPorResp[r.responsable]) tiemposPorResp[r.responsable] = [];
+    tiemposPorResp[r.responsable].push(r.tiempo);
+  });
+  const topResponsables = Object.entries(tiemposPorResp)
+    .map(([k,vals])=>[k, Math.round(vals.reduce((a,b)=>a+b,0)/vals.length)])
+    .sort((a,b)=>b[1]-a[1]).slice(0,5);
+
+  let y = 50;
+  doc.setFont('helvetica','bold'); doc.text('Top servidores con más fallas', 14, y);
+  doc.text('Tiempo promedio por responsable', pageWidth/2 + 6, y);
+  doc.setFont('helvetica','normal');
+  const maxRows = Math.max(topServidores.length, topResponsables.length, 1);
+  for(let i=0;i<maxRows;i++){
+    y += 6;
+    if(topServidores[i]) doc.text(`${topServidores[i][0]} — ${topServidores[i][1]} fallas`, 14, y);
+    if(topResponsables[i]) doc.text(`${topResponsables[i][0]} — ${topResponsables[i][1]} min`, pageWidth/2 + 6, y);
+  }
+  if(!topServidores.length && !topResponsables.length){ y += 6; doc.text('Sin datos suficientes.', 14, y); }
+
+  // Tabla de registros
+  const tableRows = list.map(r=>[r.id, r.fecha||'—', r.proceso, r.servidor||'—', r.responsable||'—', r.tipo, r.estado, r.escalamiento, r.tiempo!==''?r.tiempo:'—', r.extra||'—']);
+  doc.autoTable({
+    startY: y + 10,
+    head: [['ID','Fecha','Proceso/Job','Servidor','Responsable','Tipo','Estado','Escal.','Tiempo','Info. adicional']],
+    body: tableRows,
+    styles: { fontSize:7, cellPadding:2, overflow:'linebreak' },
+    headStyles: { fillColor:[23,29,37], textColor:255 },
+    alternateRowStyles: { fillColor:[245,247,249] },
+    columnStyles: { 9: { cellWidth: 55 } },
+    margin: { left:14, right:14 },
+  });
+
+  doc.save('informe_operaciones_' + new Date().toISOString().slice(0,10) + '.pdf');
+};
+
+renderAll();
