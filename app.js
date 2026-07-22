@@ -330,13 +330,15 @@ function uniqueValues(field){
 }
 
 function refreshFilterOptions(){
-  const tipoSel = el('filterTipo'), origenSel = el('filterOrigen');
-  const curTipo = tipoSel.value, curOrigen = origenSel.value;
+  const tipoSel = el('filterTipo'), origenSel = el('filterOrigen'), actSel = el('filterActividad');
+  const curTipo = tipoSel.value, curOrigen = origenSel.value, curAct = actSel.value;
   tipoSel.innerHTML = '<option value="">Todos los tipos</option>' +
     uniqueValues('tipo').map(t=>`<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
   origenSel.innerHTML = '<option value="">Todos los archivos</option>' +
     uniqueValues('origen').map(o=>`<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`).join('');
-  tipoSel.value = curTipo; origenSel.value = curOrigen;
+  actSel.innerHTML = '<option value="">Todas las actividades (Script, ETL, MSI...)</option>' +
+    getActivityLabels().map(a=>`<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join('');
+  tipoSel.value = curTipo; origenSel.value = curOrigen; actSel.value = curAct;
 }
 
 function getFilteredRegistros(){
@@ -344,12 +346,14 @@ function getFilteredRegistros(){
   const fEstado = el('filterEstado').value;
   const fTipo = el('filterTipo').value;
   const fOrigen = el('filterOrigen').value;
+  const fActividad = el('filterActividad').value;
   return registros.filter(r=>{
     const matchSearch = !search || [r.proceso,r.servidor,r.responsable].join(' ').toLowerCase().includes(search);
     const matchEstado = !fEstado || r.estado===fEstado;
     const matchTipo = !fTipo || r.tipo===fTipo;
     const matchOrigen = !fOrigen || r.origen===fOrigen;
-    return matchSearch && matchEstado && matchTipo && matchOrigen;
+    const matchActividad = !fActividad || activityValueForLabel(r, fActividad) > 0;
+    return matchSearch && matchEstado && matchTipo && matchOrigen && matchActividad;
   });
 }
 
@@ -359,6 +363,7 @@ function activeFilterLabels(){
   if(el('filterEstado').value) labels.push('Estado: ' + el('filterEstado').value);
   if(el('filterTipo').value) labels.push('Tipo: ' + el('filterTipo').value);
   if(el('filterOrigen').value) labels.push('Archivo: ' + el('filterOrigen').value);
+  if(el('filterActividad').value) labels.push('Actividad: ' + el('filterActividad').value);
   return labels;
 }
 
@@ -471,6 +476,7 @@ function drawChart(id){
       type:'pie',
       data:{ labels, datasets:[{ data, backgroundColor: labels.map((_,i)=>PIE_PALETTE[i % PIE_PALETTE.length]), borderColor:'#171D25', borderWidth:2 }] },
       options:{
+        animation:false,
         maintainAspectRatio:false,
         plugins:{
           legend:{ position:'right', labels:{ color:textColor, boxWidth:11, font:{size:10.5}, padding:8 } },
@@ -484,6 +490,7 @@ function drawChart(id){
       type:'bar',
       data:{ labels, datasets:[{ data, backgroundColor: baseColor, borderRadius:4, maxBarThickness:34 }] },
       options:{
+        animation:false,
         indexAxis: horizontal ? 'y' : 'x',
         maintainAspectRatio:false,
         plugins:{
@@ -679,7 +686,7 @@ function viewRaw(id){
 el('btnCloseRaw').onclick = () => el('rawOverlay').classList.remove('open');
 el('rawOverlay').addEventListener('click', e => { if(e.target.id==='rawOverlay') el('rawOverlay').classList.remove('open'); });
 
-['search','filterEstado','filterTipo','filterOrigen'].forEach(id=>{
+['search','filterEstado','filterTipo','filterOrigen','filterActividad'].forEach(id=>{
   el(id).addEventListener('input', updateViews);
   el(id).addEventListener('change', updateViews);
 });
@@ -869,7 +876,69 @@ el('btnGenerateReport').onclick = () => {
   });
 };
 
-// --- Generación del PDF (parametrizada por periodo / tipo de informe) ---
+// --- Captura de gráficos como imagen para el PDF ---
+// Los canvas que están en una pestaña oculta (display:none) miden 0x0, así
+// que Chart.js no puede dibujarlos bien. Por eso, mientras se capturan las
+// imágenes se muestran las 3 pestañas a la vez (de forma síncrona, sin
+// pintar en pantalla) y luego se restaura la vista normal.
+function withAllTabsVisible(fn){
+  const panels = document.querySelectorAll('.tabpanel');
+  const prevDisplay = Array.from(panels).map(p=>p.style.display);
+  panels.forEach(p=>{ p.style.display = 'block'; });
+  let result;
+  try{
+    result = fn();
+  } finally {
+    panels.forEach((p,i)=>{ p.style.display = prevDisplay[i]; });
+  }
+  return result;
+}
+
+function captureChartImage(id){
+  const canvas = document.getElementById(id);
+  if(!canvas || canvas.style.display === 'none') return null;
+  try{
+    return canvas.toDataURL('image/png', 1.0);
+  }catch(e){
+    console.error('No se pudo capturar el gráfico ' + id, e);
+    return null;
+  }
+}
+
+// Renderiza los 4 gráficos con los datos exactos del informe (mismo
+// periodo / actividad elegidos, no necesariamente lo que está visible en
+// pantalla ahora mismo), captura cada uno como imagen, y restaura la vista
+// normal del panel (según los filtros activos) al terminar.
+function captureReportCharts(list){
+  const currentList = getFilteredRegistros();
+  let images;
+  withAllTabsVisible(()=>{
+    renderAnalysis(list);
+    renderActividades(list);
+    images = {
+      servidor: captureChartImage('chartServidor'),
+      responsable: captureChartImage('chartResponsable'),
+      ambiente: captureChartImage('chartAmbiente'),
+      actividades: captureChartImage('chartActividades'),
+    };
+  });
+  renderAnalysis(currentList);
+  renderActividades(currentList);
+  return images;
+}
+
+// Ubica una imagen dentro de una caja máxima (maxW x maxH), conservando su
+// proporción original, y devuelve el tamaño final usado.
+function addImageFit(doc, dataUrl, x, y, maxW, maxH){
+  const props = doc.getImageProperties(dataUrl);
+  const ratio = props.width / props.height;
+  let w = maxW, h = maxW / ratio;
+  if(h > maxH){ h = maxH; w = maxH * ratio; }
+  doc.addImage(dataUrl, 'PNG', x, y, w, h);
+  return { w, h };
+}
+
+
 function generarInformePDF(list, meta){
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation:'landscape', unit:'mm', format:'a4' });
@@ -960,9 +1029,44 @@ function generarInformePDF(list, meta){
   }
   if(!topServidores.length && !topResponsables.length && !topAmbientes.length){ y += 6; doc.text('Sin datos suficientes.', col1, y); }
 
+  // Página de gráficos: se capturan los mismos 4 gráficos del panel
+  // (fallas por servidor, tiempo por responsable, tiempo por ambiente,
+  // actividades por tipo), pero calculados exactamente con los datos de
+  // este informe (periodo / actividad elegidos), no necesariamente lo que
+  // se ve en pantalla en este momento.
+  const chartImages = captureReportCharts(list);
+  doc.addPage();
+  doc.setTextColor(20); doc.setFont('helvetica','bold'); doc.setFontSize(13);
+  doc.text('Gráficos', 14, 16);
+  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(100);
+  doc.text('Calculados sobre los ' + total + ' registro(s) de este informe.', 14, 21);
+
+  const gTitles = ['Fallas por servidor / instancia', 'Tiempo promedio por responsable', 'Tiempo promedio por ambiente', 'Actividades por tipo'];
+  const gImages = [chartImages.servidor, chartImages.responsable, chartImages.ambiente, chartImages.actividades];
+  const gMargin = 14, gGap = 8;
+  const cellW = (pageWidth - gMargin*2 - gGap) / 2;
+  const cellH = 78;
+  const rowsY = [28, 28 + cellH + 14];
+  for(let i=0;i<4;i++){
+    const col = i % 2, row = Math.floor(i/2);
+    const x = gMargin + col*(cellW+gGap);
+    const yTop = rowsY[row];
+    doc.setTextColor(20); doc.setFont('helvetica','bold'); doc.setFontSize(10);
+    doc.text(gTitles[i], x, yTop);
+    if(gImages[i]){
+      addImageFit(doc, gImages[i], x, yTop + 3, cellW, cellH);
+    } else {
+      doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(140);
+      doc.text('Sin datos suficientes para este gráfico.', x, yTop + 12);
+    }
+  }
+  doc.addPage();
+
   // Tabla de registros: en modo "actividad" la última columna muestra solo
   // las actividades seleccionadas por fila; en modo general muestra la
   // info adicional completa, como antes.
+  doc.setTextColor(20); doc.setFont('helvetica','bold'); doc.setFontSize(13);
+  doc.text('Detalle de registros', 14, 16);
   const lastColHeader = esActividad ? 'Actividades seleccionadas' : 'Info. adicional';
   const tableRows = list.map(r=>{
     const lastCol = esActividad
@@ -974,7 +1078,7 @@ function generarInformePDF(list, meta){
     return [r.id, r.fecha||'—', r.proceso, r.servidor||'—', r.responsable||'—', r.tipo, r.estado, r.escalamiento, r.tiempo!==''?r.tiempo:'—', lastCol];
   });
   doc.autoTable({
-    startY: y + 10,
+    startY: 22,
     head: [['ID','Fecha','Proceso/Job','Servidor','Responsable','Tipo','Estado','Escal.','Tiempo', lastColHeader]],
     body: tableRows,
     styles: { fontSize:7, cellPadding:2, overflow:'linebreak' },
