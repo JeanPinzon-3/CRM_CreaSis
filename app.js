@@ -240,25 +240,32 @@ function rowToRegistro(row, sheetName, fileName){
       if(inicioKey===null && (h.includes('hora inicio') || h.includes('h. inicio') || h.includes('h.inicio') || /(^|\s)inicio(\s|$)/.test(h))) inicioKey = k;
       if(finalKey===null && (h.includes('hora final') || h.includes('h. final') || h.includes('h.final') || /(^|\s)final(\s|$)/.test(h) || /(^|\s)termino(\s|$)/.test(h))) finalKey = k;
     }
+    // Se marcan como usadas siempre (aunque el cálculo falle) para que no
+    // terminen colándose como "actividad" numérica más adelante.
+    if(inicioKey) usedKeys.add(inicioKey);
+    if(finalKey) usedKeys.add(finalKey);
     if(inicioKey && finalKey){
       const vIni = parseNumberLoose(row[inicioKey]);
       const vFin = parseNumberLoose(row[finalKey]);
       if(!isNaN(vIni) && !isNaN(vFin) && vFin >= vIni){
         tiempo = vFin - vIni;
-        usedKeys.add(inicioKey); usedKeys.add(finalKey);
       }
     }
   }
-  if(tiempo === ''){
-    for(const k of Object.keys(row)){
-      if(usedKeys.has(k)) continue;
-      const h = normalizeHeader(k);
-      if(h.includes('tiempo') || h.includes('despliegue') || h.includes('duracion') || h.includes('demora') || h.includes('duración')){
+  // Cualquier columna que hable de tiempo/duración (ej. "T.DESPLIEGUE") se
+  // excluye de "actividades" siempre, se haya usado o no para calcular el
+  // tiempo final, para que no aparezca como si fuera un conteo de tareas.
+  Object.keys(row).forEach(k=>{
+    if(usedKeys.has(k)) return;
+    const h = normalizeHeader(k);
+    if(h.includes('tiempo') || h.includes('despliegue') || h.includes('duracion') || h.includes('demora') || h.includes('duración')){
+      if(tiempo === ''){
         const v = parseNumberLoose(row[k]);
-        if(!isNaN(v)){ tiempo = v; usedKeys.add(k); break; }
+        if(!isNaN(v)) tiempo = v;
       }
+      usedKeys.add(k);
     }
-  }
+  });
 
   const tipoDirect = pick(['tipo solicitud','tipo']);
   const tipo = tipoDirect ? String(tipoDirect) : inferTipo(sheetName, fileName);
@@ -266,9 +273,30 @@ function rowToRegistro(row, sheetName, fileName){
   const diagnostico = String(pick(['diagnostico','observaciones','accion a tomar']));
   const accion = String(pick(['respuesta escalamiento','accion','resultado']));
 
-  // Cualquier columna que no se haya usado (incluye listas de selección
-  // múltiple, campos personalizados, etc.) se conserva aquí para no
-  // perder información.
+  // Actividades: columnas de conteo tipo checkbox (ETL, SCRIPT, Modificacion
+  // Job, Creacion Job, Restauracion BD...) que traen un número (0,1,2...)
+  // indicando cuántas veces se hizo esa actividad en el registro. Se
+  // guardan aparte (no como texto libre) para poder sumarlas y filtrarlas
+  // en la pestaña "Actividades por tipo".
+  const actividades = {};
+  Object.keys(row).forEach(k=>{
+    if(usedKeys.has(k)) return;
+    const v = row[k];
+    if(v === undefined || v === null) return;
+    const s = String(v).trim();
+    if(s === '') return;
+    if(/^-?\d+([.,]\d+)?$/.test(s)){
+      const num = parseNumberLoose(s);
+      if(!isNaN(num)){
+        actividades[String(k).trim()] = num;
+        usedKeys.add(k);
+      }
+    }
+  });
+
+  // Cualquier columna que no se haya usado (texto libre, listas de
+  // selección múltiple, campos personalizados, etc.) se conserva aquí
+  // para no perder información.
   const extraParts = [];
   Object.keys(row).forEach(k=>{
     if(usedKeys.has(k)) return;
@@ -280,7 +308,7 @@ function rowToRegistro(row, sheetName, fileName){
 
   return {
     id: genId(), fecha, proceso, servidor, responsable, estado, escalamiento, tiempo, tipo,
-    diagnostico, accion, extra: extraParts.join(' | '),
+    diagnostico, accion, extra: extraParts.join(' | '), actividades,
     origen: fileName + ' · ' + sheetName,
     raw: row, // fila 100% original, sin procesar, tal como la entregó SheetJS
   };
@@ -413,6 +441,10 @@ function renderBarChart(containerId, items, opts){
   `).join('');
 }
 
+function cleanLabel(s){
+  return String(s).replace(/[\r\n]+/g,' ').replace(/\s+/g,' ').trim();
+}
+
 function renderAnalysis(list){
   // Fallas por servidor
   const porServidor = {};
@@ -436,16 +468,73 @@ function renderAnalysis(list){
     .sort((a,b)=>b.value-a.value)
     .slice(0,8);
   renderBarChart('chartResponsable', itemsResp, {colorClass:'c-info', suffix:' min'});
+
+  // Tiempo promedio por ambiente / servidor
+  const tiemposPorAmbiente = {};
+  list.filter(r=>r.servidor && typeof r.tiempo === 'number').forEach(r=>{
+    if(!tiemposPorAmbiente[r.servidor]) tiemposPorAmbiente[r.servidor] = [];
+    tiemposPorAmbiente[r.servidor].push(r.tiempo);
+  });
+  const itemsAmbiente = Object.entries(tiemposPorAmbiente)
+    .map(([label,vals])=>({label, value:Math.round(vals.reduce((a,b)=>a+b,0)/vals.length)}))
+    .sort((a,b)=>b.value-a.value)
+    .slice(0,8);
+  renderBarChart('chartAmbiente', itemsAmbiente, {colorClass:'c-info', suffix:' min'});
+}
+
+// Suma, sobre los registros filtrados, cada columna de conteo (ETL,
+// SCRIPT, Modificacion Job, Creacion Job, Restauracion BD...) detectada
+// al importar. Así se responde "¿cuántos ETL, cuántos Job...?" de forma
+// directa y ya filtrada por búsqueda/estado/tipo/archivo.
+function renderActividades(list){
+  const totales = {};
+  list.forEach(r=>{
+    const act = r.actividades || {};
+    Object.entries(act).forEach(([k,v])=>{
+      const label = cleanLabel(k);
+      totales[label] = (totales[label]||0) + (typeof v === 'number' ? v : 0);
+    });
+  });
+  const items = Object.entries(totales)
+    .map(([label,value])=>({label,value}))
+    .filter(i=>i.value > 0)
+    .sort((a,b)=>b.value-a.value);
+  const container = el('chartActividades');
+  if(!items.length){
+    container.innerHTML = '<div class="chart-empty">No hay columnas de actividad (conteos tipo ETL, Job, Script...) detectadas en los registros filtrados.</div>';
+    return;
+  }
+  const max = Math.max(...items.map(i=>i.value));
+  container.innerHTML = items.map(i=>`
+    <div class="bar-row activity-row">
+      <div class="bar-label" title="${escapeHtml(i.label)}">${escapeHtml(i.label)}</div>
+      <div class="bar-track">
+        <div class="bar-fill c-warn" style="width:${max?Math.round(i.value/max*100):0}%"></div>
+      </div>
+      <div class="bar-value">${i.value}</div>
+    </div>
+  `).join('');
 }
 
 function updateViews(){
   const list = getFilteredRegistros();
   renderStats(list);
   renderAnalysis(list);
+  renderActividades(list);
   renderTable(list);
 }
 
 function renderAll(){ refreshFilterOptions(); updateViews(); }
+
+// --- Pestañas: Resumen / Actividades por tipo / Registros ---
+document.querySelectorAll('.tab-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+    document.querySelectorAll('.tabpanel').forEach(p=>p.classList.remove('active'));
+    btn.classList.add('active');
+    el('tab-' + btn.dataset.tab).classList.add('active');
+  });
+});
 
 // --- Modal de edición / creación ---
 function openModal(reg){

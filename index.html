@@ -32,45 +32,71 @@
 </div>
 
 <main>
-  <div class="stats" id="stats"></div>
-
-  <div class="analysis">
-    <div class="chart-panel">
-      <h2>Fallas por servidor / instancia</h2>
-      <div class="sub">Top servidores con más registros en estado "Fallido"</div>
-      <div id="chartServidor"></div>
-    </div>
-    <div class="chart-panel">
-      <h2>Tiempo promedio por responsable</h2>
-      <div class="sub">Minutos promedio de atención, por responsable</div>
-      <div id="chartResponsable"></div>
+  <div class="filterbar">
+    <div class="filters">
+      <input type="text" id="search" placeholder="Buscar proceso, servidor, responsable...">
+      <select id="filterEstado">
+        <option value="">Todos los estados</option>
+        <option value="Exitoso">Exitoso</option>
+        <option value="Fallido">Fallido</option>
+        <option value="Pendiente">Pendiente</option>
+        <option value="Otro">Otro</option>
+      </select>
+      <select id="filterTipo"><option value="">Todos los tipos</option></select>
+      <select id="filterOrigen"><option value="">Todos los archivos</option></select>
     </div>
   </div>
 
-  <div class="panel">
-    <div class="panel-head">
-      <h2>Registros</h2>
-      <div class="filters">
-        <input type="text" id="search" placeholder="Buscar proceso, servidor, responsable...">
-        <select id="filterEstado">
-          <option value="">Todos los estados</option>
-          <option value="Exitoso">Exitoso</option>
-          <option value="Fallido">Fallido</option>
-          <option value="Pendiente">Pendiente</option>
-          <option value="Otro">Otro</option>
-        </select>
-        <select id="filterTipo"><option value="">Todos los tipos</option></select>
-        <select id="filterOrigen"><option value="">Todos los archivos</option></select>
+  <div class="tabs" id="tabs">
+    <button class="tab-btn active" data-tab="resumen">▤ Resumen</button>
+    <button class="tab-btn" data-tab="actividades">▥ Actividades por tipo</button>
+    <button class="tab-btn" data-tab="registros">☰ Registros</button>
+  </div>
+
+  <div class="tabpanel active" id="tab-resumen">
+    <div class="stats" id="stats"></div>
+
+    <div class="analysis analysis-3">
+      <div class="chart-panel">
+        <h2>Fallas por servidor / instancia</h2>
+        <div class="sub">Top servidores con más registros en estado "Fallido"</div>
+        <div id="chartServidor"></div>
+      </div>
+      <div class="chart-panel">
+        <h2>Tiempo promedio por responsable</h2>
+        <div class="sub">Minutos promedio de atención, por responsable</div>
+        <div id="chartResponsable"></div>
+      </div>
+      <div class="chart-panel">
+        <h2>Tiempo promedio por ambiente</h2>
+        <div class="sub">Minutos promedio de atención, por servidor / ambiente</div>
+        <div id="chartAmbiente"></div>
       </div>
     </div>
-    <div id="tableWrap"></div>
+  </div>
+
+  <div class="tabpanel" id="tab-actividades">
+    <div class="chart-panel chart-panel-wide">
+      <h2>Actividades por tipo</h2>
+      <div class="sub">Suma de cada columna de conteo del Excel (ETL, Job, Script, Reporte...) sobre los registros filtrados</div>
+      <div id="chartActividades"></div>
+    </div>
+  </div>
+
+  <div class="tabpanel" id="tab-registros">
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Registros</h2>
+      </div>
+      <div id="tableWrap"></div>
+    </div>
   </div>
 
   <p class="hint">
     <b>Cómo funciona:</b> los datos viven en esta pestaña mientras la usas — no hay servidor detrás.
-    Puedes seleccionar <b>varios archivos Excel a la vez</b>; el panel revisa todas las hojas de cada libro y toma automáticamente las que parecen bitácoras de registros (fecha, servidor, job, responsable, estado, escalamiento, tiempo...), ignorando hojas de calendario o versionamiento vacías.
-    Las tarjetas, los gráficos y la tabla <b>responden a los filtros</b> de arriba (búsqueda, estado, tipo, archivo). Usa <b>Exportar Excel</b> para descargar lo que esté filtrado en pantalla, o <b>Generar informe PDF</b> para un resumen listo para compartir con tu supervisor.
-    Cualquier columna del Excel que no encaje en los campos principales se conserva en <b>"Info. adicional"</b> — nada se descarta. Si dudas de si una columna se leyó bien, usa el botón <b>"Ver original"</b> en cada fila para ver exactamente lo que el navegador leyó de esa celda en Excel.
+    Puedes seleccionar <b>varios archivos Excel a la vez</b>; el panel revisa todas las hojas de cada libro y toma automáticamente las que parecen bitácoras de registros (fecha, servidor, job, responsable, estado, escalamiento, tiempo...), ignorando hojas de referencia, calendario o plantillas vacías.
+    Las tarjetas, los gráficos y la tabla <b>responden a los filtros</b> de arriba (búsqueda, estado, tipo, archivo), sin importar en qué pestaña estés. Usa <b>Exportar Excel</b> para descargar lo que esté filtrado en pantalla, o <b>Generar informe PDF</b> para un resumen listo para compartir con tu supervisor.
+    Cualquier columna del Excel que no encaje en los campos principales se conserva en <b>"Info. adicional"</b>, y las columnas numéricas de conteo (ETL, Job, Script...) se suman en la pestaña <b>"Actividades por tipo"</b> — nada se descarta. Si dudas de si una columna se leyó bien, usa el botón <b>"Ver original"</b> en cada fila para ver exactamente lo que el navegador leyó de esa celda en Excel.
   </p>
 </main>
 

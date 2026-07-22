@@ -157,9 +157,40 @@ tbody tr:last-child td{ border-bottom:none; }
 
 .progress{ position:fixed; top:0; left:0; height:3px; background:var(--accent); width:0%; transition:width .2s; z-index:100;}
 
+.filterbar{
+  background:var(--panel); border:1px solid var(--border); border-radius:14px;
+  padding:14px 16px; margin-bottom:16px;
+}
+
+.tabs{
+  display:flex; gap:6px; margin-bottom:16px; flex-wrap:wrap;
+  border-bottom:1px solid var(--border); padding-bottom:0;
+}
+.tab-btn{
+  background:transparent; border:1px solid transparent; border-bottom:none;
+  border-radius:10px 10px 0 0; color:var(--muted); font-weight:600; font-size:13px;
+  padding:10px 16px; cursor:pointer; transition:.15s ease; position:relative; top:1px;
+}
+.tab-btn:hover{ color:var(--text); border-color:transparent; }
+.tab-btn.active{
+  color:var(--accent); background:var(--panel); border-color:var(--border);
+  border-bottom:1px solid var(--panel);
+}
+.tabpanel{ display:none; }
+.tabpanel.active{ display:block; }
+
 .analysis{
   display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:22px;
 }
+.analysis-3{ grid-template-columns:repeat(3, 1fr); }
+@media (max-width:1080px){ .analysis-3{ grid-template-columns:1fr 1fr; } }
+@media (max-width:760px){ .analysis-3{ grid-template-columns:1fr; } }
+
+.chart-panel-wide{ max-width:none; }
+.bar-fill.c-warn{ background:linear-gradient(90deg, var(--accent-dim), var(--warn)); }
+.activity-row .bar-label{ width:220px; }
+
+
 .chart-panel{
   background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:16px 18px;
 }
