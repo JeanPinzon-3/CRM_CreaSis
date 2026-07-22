@@ -423,27 +423,99 @@ function renderTable(list){
   `;
 }
 
-function renderBarChart(containerId, items, opts){
-  const container = el(containerId);
-  if(!items.length){
-    container.innerHTML = '<div class="chart-empty">No hay datos suficientes todavía.</div>';
-    return;
-  }
-  const max = Math.max(...items.map(i=>i.value));
-  container.innerHTML = items.map(i=>`
-    <div class="bar-row">
-      <div class="bar-label" title="${escapeHtml(i.label)}">${escapeHtml(i.label)}</div>
-      <div class="bar-track">
-        <div class="bar-fill ${opts.colorClass}" style="width:${max?Math.round(i.value/max*100):0}%"></div>
-      </div>
-      <div class="bar-value">${opts.suffix ? i.value+opts.suffix : i.value}</div>
-    </div>
-  `).join('');
-}
+// --- Gráficos con Chart.js: cada panel guarda su tipo elegido (barras
+// horizontales/verticales o torta) y los últimos datos, para poder
+// redibujar al instante cuando el usuario cambia el tipo sin recalcular. ---
+const chartState = {};   // id -> { type, items, opts, instance }
+const PIE_PALETTE = ['#4FD1C5','#5B8DEF','#F5A524','#E5484D','#3DD68C','#9F7AEA','#F56565','#38B2AC','#ED8936','#667EEA','#48BB78','#ECC94B','#FC8181','#4299E1','#B794F4'];
+const COLOR_MAP = { 'c-danger':'#E5484D', 'c-info':'#5B8DEF', 'c-warn':'#F5A524', '':'#4FD1C5' };
 
 function cleanLabel(s){
   return String(s).replace(/[\r\n]+/g,' ').replace(/\s+/g,' ').trim();
 }
+
+function renderChartData(id, items, opts={}){
+  chartState[id] = chartState[id] || { type:'hbar' };
+  chartState[id].items = items;
+  chartState[id].opts = opts;
+  drawChart(id);
+}
+
+function drawChart(id){
+  const state = chartState[id];
+  if(!state) return;
+  const canvas = document.getElementById(id);
+  const emptyEl = document.getElementById(id + '-empty');
+  if(!canvas) return;
+  if(state.instance){ state.instance.destroy(); state.instance = null; }
+
+  const items = state.items || [];
+  if(!items.length){
+    canvas.style.display = 'none';
+    if(emptyEl) emptyEl.style.display = 'block';
+    return;
+  }
+  canvas.style.display = 'block';
+  if(emptyEl) emptyEl.style.display = 'none';
+
+  const opts = state.opts || {};
+  const labels = items.map(i=>i.label);
+  const data = items.map(i=>i.value);
+  const baseColor = COLOR_MAP[opts.colorClass] || COLOR_MAP[''];
+  const suffix = opts.suffix || '';
+  const gridColor = '#2A3340', tickColor = '#8894A3', textColor = '#E8ECF1';
+
+  let cfg;
+  if(state.type === 'pie'){
+    cfg = {
+      type:'pie',
+      data:{ labels, datasets:[{ data, backgroundColor: labels.map((_,i)=>PIE_PALETTE[i % PIE_PALETTE.length]), borderColor:'#171D25', borderWidth:2 }] },
+      options:{
+        maintainAspectRatio:false,
+        plugins:{
+          legend:{ position:'right', labels:{ color:textColor, boxWidth:11, font:{size:10.5}, padding:8 } },
+          tooltip:{ callbacks:{ label: ctx => ctx.label + ': ' + ctx.parsed + suffix } }
+        }
+      }
+    };
+  } else {
+    const horizontal = state.type === 'hbar';
+    cfg = {
+      type:'bar',
+      data:{ labels, datasets:[{ data, backgroundColor: baseColor, borderRadius:4, maxBarThickness:34 }] },
+      options:{
+        indexAxis: horizontal ? 'y' : 'x',
+        maintainAspectRatio:false,
+        plugins:{
+          legend:{ display:false },
+          tooltip:{ callbacks:{ label: ctx => (horizontal ? ctx.parsed.x : ctx.parsed.y) + suffix } }
+        },
+        scales:{
+          x:{ ticks:{ color: tickColor, font:{size:10.5} }, grid:{ color: horizontal ? gridColor : 'transparent' } },
+          y:{ ticks:{ color: tickColor, font:{size:10.5} }, grid:{ color: horizontal ? 'transparent' : gridColor } }
+        }
+      }
+    };
+  }
+  state.instance = new Chart(canvas.getContext('2d'), cfg);
+}
+
+function setChartType(id, type){
+  chartState[id] = chartState[id] || { type:'hbar' };
+  chartState[id].type = type;
+  drawChart(id);
+}
+
+document.querySelectorAll('.chart-type-toggle').forEach(group=>{
+  const target = group.dataset.target;
+  group.querySelectorAll('.ctbtn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      group.querySelectorAll('.ctbtn').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      setChartType(target, btn.dataset.type);
+    });
+  });
+});
 
 function renderAnalysis(list){
   // Fallas por servidor
@@ -455,7 +527,7 @@ function renderAnalysis(list){
     .map(([label,value])=>({label,value}))
     .sort((a,b)=>b.value-a.value)
     .slice(0,8);
-  renderBarChart('chartServidor', itemsServidor, {colorClass:'c-danger'});
+  renderChartData('chartServidor', itemsServidor, {colorClass:'c-danger'});
 
   // Tiempo promedio por responsable
   const tiemposPorResp = {};
@@ -467,7 +539,7 @@ function renderAnalysis(list){
     .map(([label,vals])=>({label, value:Math.round(vals.reduce((a,b)=>a+b,0)/vals.length)}))
     .sort((a,b)=>b.value-a.value)
     .slice(0,8);
-  renderBarChart('chartResponsable', itemsResp, {colorClass:'c-info', suffix:' min'});
+  renderChartData('chartResponsable', itemsResp, {colorClass:'c-info', suffix:' min'});
 
   // Tiempo promedio por ambiente / servidor
   const tiemposPorAmbiente = {};
@@ -479,7 +551,7 @@ function renderAnalysis(list){
     .map(([label,vals])=>({label, value:Math.round(vals.reduce((a,b)=>a+b,0)/vals.length)}))
     .sort((a,b)=>b.value-a.value)
     .slice(0,8);
-  renderBarChart('chartAmbiente', itemsAmbiente, {colorClass:'c-info', suffix:' min'});
+  renderChartData('chartAmbiente', itemsAmbiente, {colorClass:'c-info', suffix:' min'});
 }
 
 // Suma, sobre los registros filtrados, cada columna de conteo (ETL,
@@ -499,21 +571,7 @@ function renderActividades(list){
     .map(([label,value])=>({label,value}))
     .filter(i=>i.value > 0)
     .sort((a,b)=>b.value-a.value);
-  const container = el('chartActividades');
-  if(!items.length){
-    container.innerHTML = '<div class="chart-empty">No hay columnas de actividad (conteos tipo ETL, Job, Script...) detectadas en los registros filtrados.</div>';
-    return;
-  }
-  const max = Math.max(...items.map(i=>i.value));
-  container.innerHTML = items.map(i=>`
-    <div class="bar-row activity-row">
-      <div class="bar-label" title="${escapeHtml(i.label)}">${escapeHtml(i.label)}</div>
-      <div class="bar-track">
-        <div class="bar-fill c-warn" style="width:${max?Math.round(i.value/max*100):0}%"></div>
-      </div>
-      <div class="bar-value">${i.value}</div>
-    </div>
-  `).join('');
+  renderChartData('chartActividades', items, {colorClass:'c-warn'});
 }
 
 function updateViews(){
@@ -715,23 +773,120 @@ el('btnExport').onclick = () => {
   XLSX.writeFile(wb, 'panel_operaciones_' + new Date().toISOString().slice(0,10) + '.xlsx');
 };
 
-// --- Generar informe PDF (respeta filtros activos) ---
-el('btnReport').onclick = () => {
-  const list = getFilteredRegistros();
-  if(list.length===0){ alert('No hay registros para incluir en el informe con los filtros actuales.'); return; }
+// --- Helpers de actividades para el informe (agrupan por etiqueta limpia,
+// igual que el gráfico, para que "SCRIPT" de distintos meses/hojas se
+// trate como una sola actividad aunque el encabezado original varíe un
+// poco en espacios/saltos de línea) ---
+const MESES_ES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 
+function getActivityLabels(){
+  const set = new Set();
+  registros.forEach(r=>{
+    Object.keys(r.actividades||{}).forEach(k=> set.add(cleanLabel(k)));
+  });
+  return Array.from(set).sort((a,b)=>a.localeCompare(b,'es'));
+}
+
+function activityValueForLabel(r, label){
+  let sum = 0;
+  Object.entries(r.actividades||{}).forEach(([k,v])=>{
+    if(cleanLabel(k)===label) sum += (typeof v==='number' ? v : 0);
+  });
+  return sum;
+}
+
+function periodoLabelFromValue(p){
+  const [y,m] = p.split('-');
+  return (MESES_ES[parseInt(m,10)-1] || m) + ' ' + y;
+}
+
+function slugify(s){
+  return String(s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'');
+}
+
+// --- Modal: configurar informe ---
+function openReportModal(){
+  const periodSel = el('rep_periodo');
+  const periods = new Set();
+  registros.forEach(r=>{ if(r.fecha && /^\d{4}-\d{2}/.test(r.fecha)) periods.add(r.fecha.slice(0,7)); });
+  const sortedPeriods = Array.from(periods).sort();
+  periodSel.innerHTML = '<option value="">Todo el periodo (según filtros actuales)</option>' +
+    sortedPeriods.map(p=>`<option value="${p}">${escapeHtml(periodoLabelFromValue(p))}</option>`).join('');
+
+  const labels = getActivityLabels();
+  const wrap = el('rep_actividades_list');
+  if(!labels.length){
+    wrap.innerHTML = '<div class="chart-empty">No se detectaron columnas de actividad (ETL, Job, Script...) en los registros importados.</div>';
+  } else {
+    wrap.innerHTML = labels.map(l=>`
+      <label><input type="checkbox" class="rep-act-check" value="${escapeHtml(l)}"> ${escapeHtml(l)}</label>
+    `).join('');
+  }
+
+  document.querySelector('input[name="rep_tipo"][value="general"]').checked = true;
+  el('rep_actividades_wrap').style.display = 'none';
+  el('reportOverlay').classList.add('open');
+}
+
+el('btnReport').onclick = openReportModal;
+el('btnCancelReport').onclick = () => el('reportOverlay').classList.remove('open');
+
+document.querySelectorAll('input[name="rep_tipo"]').forEach(radio=>{
+  radio.addEventListener('change', ()=>{
+    const val = document.querySelector('input[name="rep_tipo"]:checked').value;
+    el('rep_actividades_wrap').style.display = (val==='actividad') ? 'block' : 'none';
+  });
+});
+
+el('btnGenerateReport').onclick = () => {
+  const periodo = el('rep_periodo').value;
+  const tipo = document.querySelector('input[name="rep_tipo"]:checked').value;
+  const selectedActs = Array.from(document.querySelectorAll('.rep-act-check:checked')).map(c=>c.value);
+
+  if(tipo==='actividad' && selectedActs.length===0){
+    alert('Selecciona al menos una actividad, o cambia a "Resumen general".');
+    return;
+  }
+
+  let list = getFilteredRegistros();
+  if(periodo) list = list.filter(r=> (r.fecha||'').slice(0,7) === periodo);
+  if(tipo==='actividad'){
+    list = list.filter(r=> selectedActs.some(label => activityValueForLabel(r,label) > 0));
+  }
+
+  if(list.length===0){
+    alert('No hay registros que cumplan los criterios seleccionados (periodo / actividad) para generar el informe.');
+    return;
+  }
+
+  el('reportOverlay').classList.remove('open');
+  generarInformePDF(list, {
+    periodo,
+    periodoLabel: periodo ? periodoLabelFromValue(periodo) : 'Todo el periodo',
+    tipo,
+    selectedActs,
+  });
+};
+
+// --- Generación del PDF (parametrizada por periodo / tipo de informe) ---
+function generarInformePDF(list, meta){
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation:'landscape', unit:'mm', format:'a4' });
   const pageWidth = doc.internal.pageSize.getWidth();
-  const fecha = new Date().toLocaleDateString('es-CO', { year:'numeric', month:'long', day:'numeric' });
+  const fechaGen = new Date().toLocaleDateString('es-CO', { year:'numeric', month:'long', day:'numeric' });
+  const esActividad = meta.tipo === 'actividad';
 
   doc.setFont('helvetica','bold'); doc.setFontSize(16);
   doc.text('Informe de Operaciones', 14, 16);
   doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(100);
-  doc.text('Generado el ' + fecha, 14, 22);
+  doc.text('Generado el ' + fechaGen + '   ·   Periodo: ' + meta.periodoLabel, 14, 22);
+
+  const tipoLabel = esActividad ? ('Por actividad específica: ' + meta.selectedActs.join(', ')) : 'Resumen general (todos los procedimientos)';
+  doc.text('Tipo de informe: ' + tipoLabel, 14, 27);
 
   const filtros = activeFilterLabels();
-  doc.text(filtros.length ? 'Filtros aplicados: ' + filtros.join(' · ') : 'Filtros aplicados: ninguno (todos los registros)', 14, 27);
+  doc.text(filtros.length ? 'Filtros aplicados: ' + filtros.join(' · ') : 'Filtros aplicados: ninguno', 14, 32);
 
   // Resumen
   const total = list.length;
@@ -742,11 +897,31 @@ el('btnReport').onclick = () => {
   const promedio = tiempos.length ? Math.round(tiempos.reduce((a,b)=>a+b,0)/tiempos.length) : 0;
 
   doc.setTextColor(20); doc.setFont('helvetica','bold'); doc.setFontSize(11);
-  doc.text('Resumen', 14, 36);
+  doc.text('Resumen', 14, 41);
   doc.setFont('helvetica','normal'); doc.setFontSize(10);
-  doc.text(`Total: ${total}      Fallidos: ${fallidos}      Exitosos: ${exitosos}      Con escalamiento: ${escalados}      Tiempo promedio: ${promedio} min`, 14, 42);
+  doc.text(`Total: ${total}      Fallidos: ${fallidos}      Exitosos: ${exitosos}      Con escalamiento: ${escalados}      Tiempo promedio: ${promedio} min`, 14, 47);
 
-  // Top servidores con fallas
+  let y = 47;
+
+  // Si el informe es "por actividad", mostrar el total de cada actividad
+  // seleccionada dentro del periodo/filtros elegidos.
+  if(esActividad){
+    const totalesAct = meta.selectedActs.map(label=>{
+      const sum = list.reduce((acc,r)=>acc + activityValueForLabel(r,label), 0);
+      const registrosConEsa = list.filter(r=>activityValueForLabel(r,label) > 0).length;
+      return { label, sum, registrosConEsa };
+    });
+    y += 9;
+    doc.setFont('helvetica','bold'); doc.setFontSize(11);
+    doc.text('Totales de actividad en el periodo', 14, y);
+    doc.setFont('helvetica','normal'); doc.setFontSize(10);
+    totalesAct.forEach(t=>{
+      y += 6;
+      doc.text(`${t.label}: ${t.sum} en total, sobre ${t.registrosConEsa} registro(s)`, 14, y);
+    });
+  }
+
+  // Top servidores / responsables / ambiente (tiempo)
   const porServidor = {};
   list.filter(r=>r.estado==='Fallido' && r.servidor).forEach(r=>{ porServidor[r.servidor] = (porServidor[r.servidor]||0)+1; });
   const topServidores = Object.entries(porServidor).sort((a,b)=>b[1]-a[1]).slice(0,5);
@@ -760,23 +935,47 @@ el('btnReport').onclick = () => {
     .map(([k,vals])=>[k, Math.round(vals.reduce((a,b)=>a+b,0)/vals.length)])
     .sort((a,b)=>b[1]-a[1]).slice(0,5);
 
-  let y = 50;
-  doc.setFont('helvetica','bold'); doc.text('Top servidores con más fallas', 14, y);
-  doc.text('Tiempo promedio por responsable', pageWidth/2 + 6, y);
+  const tiemposPorAmbiente = {};
+  list.filter(r=>r.servidor && typeof r.tiempo === 'number').forEach(r=>{
+    if(!tiemposPorAmbiente[r.servidor]) tiemposPorAmbiente[r.servidor] = [];
+    tiemposPorAmbiente[r.servidor].push(r.tiempo);
+  });
+  const topAmbientes = Object.entries(tiemposPorAmbiente)
+    .map(([k,vals])=>[k, Math.round(vals.reduce((a,b)=>a+b,0)/vals.length)])
+    .sort((a,b)=>b[1]-a[1]).slice(0,5);
+
+  const col1 = 14, col2 = pageWidth/3 + 4, col3 = (pageWidth/3)*2 - 6;
+  y += 10;
+  doc.setFont('helvetica','bold');
+  doc.text('Top servidores con más fallas', col1, y);
+  doc.text('Tiempo promedio por responsable', col2, y);
+  doc.text('Tiempo promedio por ambiente', col3, y);
   doc.setFont('helvetica','normal');
-  const maxRows = Math.max(topServidores.length, topResponsables.length, 1);
+  const maxRows = Math.max(topServidores.length, topResponsables.length, topAmbientes.length, 1);
   for(let i=0;i<maxRows;i++){
     y += 6;
-    if(topServidores[i]) doc.text(`${topServidores[i][0]} — ${topServidores[i][1]} fallas`, 14, y);
-    if(topResponsables[i]) doc.text(`${topResponsables[i][0]} — ${topResponsables[i][1]} min`, pageWidth/2 + 6, y);
+    if(topServidores[i]) doc.text(`${topServidores[i][0]} — ${topServidores[i][1]} fallas`, col1, y);
+    if(topResponsables[i]) doc.text(`${topResponsables[i][0]} — ${topResponsables[i][1]} min`, col2, y);
+    if(topAmbientes[i]) doc.text(`${topAmbientes[i][0]} — ${topAmbientes[i][1]} min`, col3, y);
   }
-  if(!topServidores.length && !topResponsables.length){ y += 6; doc.text('Sin datos suficientes.', 14, y); }
+  if(!topServidores.length && !topResponsables.length && !topAmbientes.length){ y += 6; doc.text('Sin datos suficientes.', col1, y); }
 
-  // Tabla de registros
-  const tableRows = list.map(r=>[r.id, r.fecha||'—', r.proceso, r.servidor||'—', r.responsable||'—', r.tipo, r.estado, r.escalamiento, r.tiempo!==''?r.tiempo:'—', r.extra||'—']);
+  // Tabla de registros: en modo "actividad" la última columna muestra solo
+  // las actividades seleccionadas por fila; en modo general muestra la
+  // info adicional completa, como antes.
+  const lastColHeader = esActividad ? 'Actividades seleccionadas' : 'Info. adicional';
+  const tableRows = list.map(r=>{
+    const lastCol = esActividad
+      ? (meta.selectedActs.map(label=>{
+          const v = activityValueForLabel(r, label);
+          return v>0 ? (label + ': ' + v) : null;
+        }).filter(Boolean).join(' · ') || '—')
+      : (r.extra || '—');
+    return [r.id, r.fecha||'—', r.proceso, r.servidor||'—', r.responsable||'—', r.tipo, r.estado, r.escalamiento, r.tiempo!==''?r.tiempo:'—', lastCol];
+  });
   doc.autoTable({
     startY: y + 10,
-    head: [['ID','Fecha','Proceso/Job','Servidor','Responsable','Tipo','Estado','Escal.','Tiempo','Info. adicional']],
+    head: [['ID','Fecha','Proceso/Job','Servidor','Responsable','Tipo','Estado','Escal.','Tiempo', lastColHeader]],
     body: tableRows,
     styles: { fontSize:7, cellPadding:2, overflow:'linebreak' },
     headStyles: { fillColor:[23,29,37], textColor:255 },
@@ -785,7 +984,11 @@ el('btnReport').onclick = () => {
     margin: { left:14, right:14 },
   });
 
-  doc.save('informe_operaciones_' + new Date().toISOString().slice(0,10) + '.pdf');
-};
+  const filenameParts = ['informe_operaciones'];
+  if(meta.periodo) filenameParts.push(meta.periodo);
+  if(esActividad) filenameParts.push(meta.selectedActs.slice(0,2).map(slugify).join('_'));
+  filenameParts.push(new Date().toISOString().slice(0,10));
+  doc.save(filenameParts.join('_') + '.pdf');
+}
 
 renderAll();

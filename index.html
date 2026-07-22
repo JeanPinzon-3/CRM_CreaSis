@@ -8,6 +8,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
 </head>
 <body>
 
@@ -58,28 +59,76 @@
 
     <div class="analysis analysis-3">
       <div class="chart-panel">
-        <h2>Fallas por servidor / instancia</h2>
-        <div class="sub">Top servidores con más registros en estado "Fallido"</div>
-        <div id="chartServidor"></div>
+        <div class="chart-panel-head">
+          <div>
+            <h2>Fallas por servidor / instancia</h2>
+            <div class="sub">Top servidores con más registros en estado "Fallido"</div>
+          </div>
+          <div class="chart-type-toggle" data-target="chartServidor">
+            <button type="button" class="ctbtn active" data-type="hbar" title="Barras horizontales">▤</button>
+            <button type="button" class="ctbtn" data-type="vbar" title="Barras verticales">▥</button>
+            <button type="button" class="ctbtn" data-type="pie" title="Torta">◔</button>
+          </div>
+        </div>
+        <div class="chart-canvas-wrap">
+          <canvas id="chartServidor"></canvas>
+          <div class="chart-empty" id="chartServidor-empty" style="display:none">Sin datos para los filtros actuales.</div>
+        </div>
       </div>
       <div class="chart-panel">
-        <h2>Tiempo promedio por responsable</h2>
-        <div class="sub">Minutos promedio de atención, por responsable</div>
-        <div id="chartResponsable"></div>
+        <div class="chart-panel-head">
+          <div>
+            <h2>Tiempo promedio por responsable</h2>
+            <div class="sub">Minutos promedio de atención, por responsable</div>
+          </div>
+          <div class="chart-type-toggle" data-target="chartResponsable">
+            <button type="button" class="ctbtn active" data-type="hbar" title="Barras horizontales">▤</button>
+            <button type="button" class="ctbtn" data-type="vbar" title="Barras verticales">▥</button>
+            <button type="button" class="ctbtn" data-type="pie" title="Torta">◔</button>
+          </div>
+        </div>
+        <div class="chart-canvas-wrap">
+          <canvas id="chartResponsable"></canvas>
+          <div class="chart-empty" id="chartResponsable-empty" style="display:none">Sin datos para los filtros actuales.</div>
+        </div>
       </div>
       <div class="chart-panel">
-        <h2>Tiempo promedio por ambiente</h2>
-        <div class="sub">Minutos promedio de atención, por servidor / ambiente</div>
-        <div id="chartAmbiente"></div>
+        <div class="chart-panel-head">
+          <div>
+            <h2>Tiempo promedio por ambiente</h2>
+            <div class="sub">Minutos promedio de atención, por servidor / ambiente</div>
+          </div>
+          <div class="chart-type-toggle" data-target="chartAmbiente">
+            <button type="button" class="ctbtn active" data-type="hbar" title="Barras horizontales">▤</button>
+            <button type="button" class="ctbtn" data-type="vbar" title="Barras verticales">▥</button>
+            <button type="button" class="ctbtn" data-type="pie" title="Torta">◔</button>
+          </div>
+        </div>
+        <div class="chart-canvas-wrap">
+          <canvas id="chartAmbiente"></canvas>
+          <div class="chart-empty" id="chartAmbiente-empty" style="display:none">Sin datos para los filtros actuales.</div>
+        </div>
       </div>
     </div>
   </div>
 
   <div class="tabpanel" id="tab-actividades">
     <div class="chart-panel chart-panel-wide">
-      <h2>Actividades por tipo</h2>
-      <div class="sub">Suma de cada columna de conteo del Excel (ETL, Job, Script, Reporte...) sobre los registros filtrados</div>
-      <div id="chartActividades"></div>
+      <div class="chart-panel-head">
+        <div>
+          <h2>Actividades por tipo</h2>
+          <div class="sub">Suma de cada columna de conteo del Excel (ETL, Job, Script, Reporte...) sobre los registros filtrados</div>
+        </div>
+        <div class="chart-type-toggle" data-target="chartActividades">
+          <button type="button" class="ctbtn active" data-type="hbar" title="Barras horizontales">▤</button>
+          <button type="button" class="ctbtn" data-type="vbar" title="Barras verticales">▥</button>
+          <button type="button" class="ctbtn" data-type="pie" title="Torta">◔</button>
+        </div>
+      </div>
+      <div class="chart-canvas-wrap chart-canvas-wrap-tall">
+        <canvas id="chartActividades"></canvas>
+        <div class="chart-empty" id="chartActividades-empty" style="display:none">No hay columnas de actividad detectadas en los registros filtrados.</div>
+      </div>
     </div>
   </div>
 
@@ -178,6 +227,39 @@
     <div id="rawContent"></div>
     <div class="modal-actions">
       <button type="button" class="ghost" id="btnCloseRaw">Cerrar</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="reportOverlay">
+  <div class="modal wide">
+    <h3>Configurar informe</h3>
+    <p class="modal-sub">El informe siempre respeta los filtros activos (búsqueda, estado, tipo, archivo) de arriba. Aquí puedes además acotarlo por periodo y por tipo de actividad específica.</p>
+
+    <div class="field">
+      <label>Periodo</label>
+      <select id="rep_periodo">
+        <option value="">Todo el periodo (según filtros actuales)</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label>Tipo de informe</label>
+      <div class="radio-group">
+        <label><input type="radio" name="rep_tipo" value="general" checked> Resumen general (todos los procedimientos)</label>
+        <label><input type="radio" name="rep_tipo" value="actividad"> Solo actividades específicas (ej. Script, ETL, Job...)</label>
+      </div>
+    </div>
+
+    <div class="field" id="rep_actividades_wrap" style="display:none">
+      <label>Actividades a incluir</label>
+      <div class="checkbox-grid" id="rep_actividades_list"></div>
+      <small class="field-hint">Se incluirán solo los registros donde alguna de las actividades marcadas tenga un valor mayor a 0. El informe mostrará el total de cada una para el periodo elegido.</small>
+    </div>
+
+    <div class="modal-actions">
+      <button type="button" class="ghost" id="btnCancelReport">Cancelar</button>
+      <button type="button" class="primary" id="btnGenerateReport">Generar PDF</button>
     </div>
   </div>
 </div>
