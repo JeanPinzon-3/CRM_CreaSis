@@ -330,15 +330,13 @@ function uniqueValues(field){
 }
 
 function refreshFilterOptions(){
-  const tipoSel = el('filterTipo'), origenSel = el('filterOrigen'), actSel = el('filterActividad');
-  const curTipo = tipoSel.value, curOrigen = origenSel.value, curAct = actSel.value;
+  const tipoSel = el('filterTipo'), origenSel = el('filterOrigen');
+  const curTipo = tipoSel.value, curOrigen = origenSel.value;
   tipoSel.innerHTML = '<option value="">Todos los tipos</option>' +
     uniqueValues('tipo').map(t=>`<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
   origenSel.innerHTML = '<option value="">Todos los archivos</option>' +
     uniqueValues('origen').map(o=>`<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`).join('');
-  actSel.innerHTML = '<option value="">Todas las actividades (Script, ETL, MSI...)</option>' +
-    getActivityLabels().map(a=>`<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join('');
-  tipoSel.value = curTipo; origenSel.value = curOrigen; actSel.value = curAct;
+  tipoSel.value = curTipo; origenSel.value = curOrigen;
 }
 
 function getFilteredRegistros(){
@@ -346,14 +344,12 @@ function getFilteredRegistros(){
   const fEstado = el('filterEstado').value;
   const fTipo = el('filterTipo').value;
   const fOrigen = el('filterOrigen').value;
-  const fActividad = el('filterActividad').value;
   return registros.filter(r=>{
     const matchSearch = !search || [r.proceso,r.servidor,r.responsable].join(' ').toLowerCase().includes(search);
     const matchEstado = !fEstado || r.estado===fEstado;
     const matchTipo = !fTipo || r.tipo===fTipo;
     const matchOrigen = !fOrigen || r.origen===fOrigen;
-    const matchActividad = !fActividad || activityValueForLabel(r, fActividad) > 0;
-    return matchSearch && matchEstado && matchTipo && matchOrigen && matchActividad;
+    return matchSearch && matchEstado && matchTipo && matchOrigen;
   });
 }
 
@@ -363,7 +359,6 @@ function activeFilterLabels(){
   if(el('filterEstado').value) labels.push('Estado: ' + el('filterEstado').value);
   if(el('filterTipo').value) labels.push('Tipo: ' + el('filterTipo').value);
   if(el('filterOrigen').value) labels.push('Archivo: ' + el('filterOrigen').value);
-  if(el('filterActividad').value) labels.push('Actividad: ' + el('filterActividad').value);
   return labels;
 }
 
@@ -561,16 +556,66 @@ function renderAnalysis(list){
   renderChartData('chartAmbiente', itemsAmbiente, {colorClass:'c-info', suffix:' min'});
 }
 
+// --- Selección local de actividades (dentro de la pestaña "Actividades
+// por tipo"): checkboxes para ver una, varias o todas las actividades
+// (Script, ETL, MSI...). Por defecto empiezan todas marcadas; al importar
+// más archivos, cualquier actividad nueva que aparezca se marca también
+// por defecto, sin tocar lo que el usuario ya haya desmarcado.
+let activitySelection = new Set();
+let knownActivityLabels = new Set();
+
+function syncActivitySelection(labels){
+  labels.forEach(l=>{
+    if(!knownActivityLabels.has(l)){ activitySelection.add(l); knownActivityLabels.add(l); }
+  });
+  Array.from(knownActivityLabels).forEach(l=>{
+    if(!labels.includes(l)){ knownActivityLabels.delete(l); activitySelection.delete(l); }
+  });
+}
+
+function renderActivityFilterList(){
+  const labels = getActivityLabels();
+  syncActivitySelection(labels);
+  const wrap = el('act_filter_list');
+  if(!labels.length){
+    wrap.innerHTML = '<div class="chart-empty">No hay columnas de actividad (conteos tipo ETL, Job, Script...) detectadas todavía.</div>';
+    return;
+  }
+  wrap.innerHTML = labels.map(l=>`
+    <label><input type="checkbox" class="act-filter-check" value="${escapeHtml(l)}" ${activitySelection.has(l)?'checked':''}> ${escapeHtml(l)}</label>
+  `).join('');
+}
+
+el('act_filter_list').addEventListener('change', (e)=>{
+  if(!e.target.classList.contains('act-filter-check')) return;
+  if(e.target.checked) activitySelection.add(e.target.value);
+  else activitySelection.delete(e.target.value);
+  renderActividades(getFilteredRegistros());
+});
+
+el('btnActSelectAll').onclick = () => {
+  getActivityLabels().forEach(l=>activitySelection.add(l));
+  renderActivityFilterList();
+  renderActividades(getFilteredRegistros());
+};
+el('btnActSelectNone').onclick = () => {
+  activitySelection.clear();
+  renderActivityFilterList();
+  renderActividades(getFilteredRegistros());
+};
+
 // Suma, sobre los registros filtrados, cada columna de conteo (ETL,
-// SCRIPT, Modificacion Job, Creacion Job, Restauracion BD...) detectada
-// al importar. Así se responde "¿cuántos ETL, cuántos Job...?" de forma
-// directa y ya filtrada por búsqueda/estado/tipo/archivo.
+// SCRIPT, Modificacion Job, Creacion Job, Restauracion BD...) que esté
+// marcada en el selector de la pestaña. Así se responde "¿cuántos ETL,
+// cuántos Job...?" viendo una actividad a la vez, varias, o todas.
 function renderActividades(list){
+  syncActivitySelection(getActivityLabels());
   const totales = {};
   list.forEach(r=>{
     const act = r.actividades || {};
     Object.entries(act).forEach(([k,v])=>{
       const label = cleanLabel(k);
+      if(!activitySelection.has(label)) return;
       totales[label] = (totales[label]||0) + (typeof v === 'number' ? v : 0);
     });
   });
@@ -585,6 +630,7 @@ function updateViews(){
   const list = getFilteredRegistros();
   renderStats(list);
   renderAnalysis(list);
+  renderActivityFilterList();
   renderActividades(list);
   renderTable(list);
 }
@@ -686,7 +732,7 @@ function viewRaw(id){
 el('btnCloseRaw').onclick = () => el('rawOverlay').classList.remove('open');
 el('rawOverlay').addEventListener('click', e => { if(e.target.id==='rawOverlay') el('rawOverlay').classList.remove('open'); });
 
-['search','filterEstado','filterTipo','filterOrigen','filterActividad'].forEach(id=>{
+['search','filterEstado','filterTipo','filterOrigen'].forEach(id=>{
   el(id).addEventListener('input', updateViews);
   el(id).addEventListener('change', updateViews);
 });
