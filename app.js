@@ -476,32 +476,94 @@ function drawChart(id){
   const canvas = document.getElementById(id);
   const emptyEl = document.getElementById(id + '-empty');
   if(!canvas) return;
-  if(state.instance){ state.instance.destroy(); state.instance = null; }
+  if(emptyEl && emptyEl.dataset.defaultText === undefined){ emptyEl.dataset.defaultText = emptyEl.textContent; }
+  if(state.instance){ try{ state.instance.destroy(); }catch(e){} state.instance = null; }
 
-  const gridColor = '#2A3340', tickColor = '#8894A3', textColor = '#E8ECF1';
-  const opts = state.opts || {};
-  const suffix = opts.suffix || '';
+  try{
+    const gridColor = '#2A3340', tickColor = '#8894A3', textColor = '#E8ECF1';
+    const opts = state.opts || {};
+    const suffix = opts.suffix || '';
 
-  if(state.grouped){
-    const categories = state.categories || [];
-    const series = state.series || [];
-    const hasData = categories.length && series.some(s=>(s.data||[]).some(v=>v>0));
-    if(!hasData){
+    if(state.grouped){
+      const categories = state.categories || [];
+      const series = state.series || [];
+      const hasData = categories.length && series.some(s=>(s.data||[]).some(v=>v>0));
+      if(!hasData){
+        canvas.style.display = 'none';
+        if(emptyEl){ emptyEl.style.display = 'block'; emptyEl.textContent = emptyEl.dataset.defaultText; }
+        return;
+      }
+      canvas.style.display = 'block';
+      if(emptyEl) emptyEl.style.display = 'none';
+
+      let cfg;
+      if(state.type === 'pie'){
+        const totals = categories.map((c,i)=> series.reduce((acc,s)=>acc+(s.data[i]||0),0));
+        cfg = {
+          type:'pie',
+          data:{ labels: categories, datasets:[{ data: totals, backgroundColor: categories.map((_,i)=>PIE_PALETTE[i % PIE_PALETTE.length]), borderColor:'#171D25', borderWidth:2 }] },
+          options:{
+            animation:false, maintainAspectRatio:false,
+            plugins:{
+              legend:{ position:'right', labels:{ color:textColor, boxWidth:11, font:{size:10.5}, padding:8 } },
+              tooltip:{ callbacks:{ label: ctx => ctx.label + ': ' + ctx.parsed + suffix } },
+              datalabels: datalabelsFor(suffix, '#0F1318'),
+            }
+          }
+        };
+      } else {
+        const horizontal = state.type === 'hbar';
+        cfg = {
+          type:'bar',
+          data:{
+            labels: categories,
+            datasets: series.map((s,i)=>({
+              label: s.name, data: s.data,
+              backgroundColor: SERIES_COLORS[i % SERIES_COLORS.length],
+              borderRadius:3, maxBarThickness:30,
+            }))
+          },
+          options:{
+            animation:false,
+            indexAxis: horizontal ? 'y' : 'x',
+            maintainAspectRatio:false,
+            plugins:{
+              legend:{ display:true, position:'top', align:'end', labels:{ color:textColor, boxWidth:11, font:{size:10.5} } },
+              tooltip:{ callbacks:{ label: ctx => ctx.dataset.label + ': ' + (horizontal ? ctx.parsed.x : ctx.parsed.y) + suffix } },
+              datalabels: datalabelsFor(suffix),
+            },
+            scales:{
+              x:{ ticks:{ color: tickColor, font:{size:10} }, grid:{ color: horizontal ? gridColor : 'transparent' } },
+              y:{ ticks:{ color: tickColor, font:{size:10} }, grid:{ color: horizontal ? 'transparent' : gridColor } }
+            }
+          }
+        };
+      }
+      state.instance = new Chart(canvas.getContext('2d'), cfg);
+      return;
+    }
+
+    const items = state.items || [];
+    if(!items.length){
       canvas.style.display = 'none';
-      if(emptyEl) emptyEl.style.display = 'block';
+      if(emptyEl){ emptyEl.style.display = 'block'; emptyEl.textContent = emptyEl.dataset.defaultText; }
       return;
     }
     canvas.style.display = 'block';
     if(emptyEl) emptyEl.style.display = 'none';
 
+    const labels = items.map(i=>i.label);
+    const data = items.map(i=>i.value);
+    const baseColor = COLOR_MAP[opts.colorClass] || COLOR_MAP[''];
+
     let cfg;
     if(state.type === 'pie'){
-      const totals = categories.map((c,i)=> series.reduce((acc,s)=>acc+(s.data[i]||0),0));
       cfg = {
         type:'pie',
-        data:{ labels: categories, datasets:[{ data: totals, backgroundColor: categories.map((_,i)=>PIE_PALETTE[i % PIE_PALETTE.length]), borderColor:'#171D25', borderWidth:2 }] },
+        data:{ labels, datasets:[{ data, backgroundColor: labels.map((_,i)=>PIE_PALETTE[i % PIE_PALETTE.length]), borderColor:'#171D25', borderWidth:2 }] },
         options:{
-          animation:false, maintainAspectRatio:false,
+          animation:false,
+          maintainAspectRatio:false,
           plugins:{
             legend:{ position:'right', labels:{ color:textColor, boxWidth:11, font:{size:10.5}, padding:8 } },
             tooltip:{ callbacks:{ label: ctx => ctx.label + ': ' + ctx.parsed + suffix } },
@@ -513,84 +575,35 @@ function drawChart(id){
       const horizontal = state.type === 'hbar';
       cfg = {
         type:'bar',
-        data:{
-          labels: categories,
-          datasets: series.map((s,i)=>({
-            label: s.name, data: s.data,
-            backgroundColor: SERIES_COLORS[i % SERIES_COLORS.length],
-            borderRadius:3, maxBarThickness:30,
-          }))
-        },
+        data:{ labels, datasets:[{ data, backgroundColor: baseColor, borderRadius:4, maxBarThickness:34 }] },
         options:{
           animation:false,
           indexAxis: horizontal ? 'y' : 'x',
           maintainAspectRatio:false,
           plugins:{
-            legend:{ display:true, position:'top', align:'end', labels:{ color:textColor, boxWidth:11, font:{size:10.5} } },
-            tooltip:{ callbacks:{ label: ctx => ctx.dataset.label + ': ' + (horizontal ? ctx.parsed.x : ctx.parsed.y) + suffix } },
+            legend:{ display:false },
+            tooltip:{ callbacks:{ label: ctx => (horizontal ? ctx.parsed.x : ctx.parsed.y) + suffix } },
             datalabels: datalabelsFor(suffix),
           },
           scales:{
-            x:{ ticks:{ color: tickColor, font:{size:10} }, grid:{ color: horizontal ? gridColor : 'transparent' } },
-            y:{ ticks:{ color: tickColor, font:{size:10} }, grid:{ color: horizontal ? 'transparent' : gridColor } }
+            x:{ ticks:{ color: tickColor, font:{size:10.5} }, grid:{ color: horizontal ? gridColor : 'transparent' } },
+            y:{ ticks:{ color: tickColor, font:{size:10.5} }, grid:{ color: horizontal ? 'transparent' : gridColor } }
           }
         }
       };
     }
     state.instance = new Chart(canvas.getContext('2d'), cfg);
-    return;
-  }
-
-  const items = state.items || [];
-  if(!items.length){
+  } catch(err){
+    // Un gráfico que falla no debe dejar en blanco ni tumbar a los demás:
+    // se muestra el mensaje de "sin datos" y el detalle queda en consola
+    // para poder diagnosticarlo (F12 → Consola).
+    console.error('No se pudo dibujar el gráfico "' + id + '":', err);
     canvas.style.display = 'none';
-    if(emptyEl) emptyEl.style.display = 'block';
-    return;
+    if(emptyEl){
+      emptyEl.style.display = 'block';
+      emptyEl.textContent = 'No se pudo dibujar este gráfico (ver consola del navegador para más detalle).';
+    }
   }
-  canvas.style.display = 'block';
-  if(emptyEl) emptyEl.style.display = 'none';
-
-  const labels = items.map(i=>i.label);
-  const data = items.map(i=>i.value);
-  const baseColor = COLOR_MAP[opts.colorClass] || COLOR_MAP[''];
-
-  let cfg;
-  if(state.type === 'pie'){
-    cfg = {
-      type:'pie',
-      data:{ labels, datasets:[{ data, backgroundColor: labels.map((_,i)=>PIE_PALETTE[i % PIE_PALETTE.length]), borderColor:'#171D25', borderWidth:2 }] },
-      options:{
-        animation:false,
-        maintainAspectRatio:false,
-        plugins:{
-          legend:{ position:'right', labels:{ color:textColor, boxWidth:11, font:{size:10.5}, padding:8 } },
-          tooltip:{ callbacks:{ label: ctx => ctx.label + ': ' + ctx.parsed + suffix } },
-          datalabels: datalabelsFor(suffix, '#0F1318'),
-        }
-      }
-    };
-  } else {
-    const horizontal = state.type === 'hbar';
-    cfg = {
-      type:'bar',
-      data:{ labels, datasets:[{ data, backgroundColor: baseColor, borderRadius:4, maxBarThickness:34 }] },
-      options:{
-        animation:false,
-        indexAxis: horizontal ? 'y' : 'x',
-        maintainAspectRatio:false,
-        plugins:{
-          legend:{ display:false },
-          tooltip:{ callbacks:{ label: ctx => (horizontal ? ctx.parsed.x : ctx.parsed.y) + suffix } },
-          datalabels: datalabelsFor(suffix),
-        },
-        scales:{
-          x:{ ticks:{ color: tickColor, font:{size:10.5} }, grid:{ color: horizontal ? gridColor : 'transparent' } },
-          y:{ ticks:{ color: tickColor, font:{size:10.5} }, grid:{ color: horizontal ? 'transparent' : gridColor } }
-        }
-      }
-    };
-  }
-  state.instance = new Chart(canvas.getContext('2d'), cfg);
 }
 
 function setChartType(id, type){
@@ -1091,21 +1104,28 @@ function captureChartImage(id){
 // normal del panel (según los filtros activos) al terminar.
 function captureReportCharts(list){
   const currentList = getFilteredRegistros();
-  let images;
-  withAllTabsVisible(()=>{
-    renderAnalysis(list);
-    renderActividades(list);
-    images = {
-      servidor: captureChartImage('chartServidor'),
-      ambienteConteo: captureChartImage('chartAmbienteConteo'),
-      responsable: captureChartImage('chartResponsable'),
-      ambiente: captureChartImage('chartAmbiente'),
-      tipoSolicitud: captureChartImage('chartTipoSolicitud'),
-      actividades: captureChartImage('chartActividades'),
-    };
-  });
-  renderAnalysis(currentList);
-  renderActividades(currentList);
+  let images = {};
+  try{
+    withAllTabsVisible(()=>{
+      renderAnalysis(list);
+      renderActividades(list);
+      images = {
+        servidor: captureChartImage('chartServidor'),
+        ambienteConteo: captureChartImage('chartAmbienteConteo'),
+        responsable: captureChartImage('chartResponsable'),
+        ambiente: captureChartImage('chartAmbiente'),
+        tipoSolicitud: captureChartImage('chartTipoSolicitud'),
+        actividades: captureChartImage('chartActividades'),
+      };
+    });
+  } catch(err){
+    console.error('No se pudieron capturar los gráficos para el PDF:', err);
+  } finally {
+    // Pase lo que pase arriba, la vista normal del panel (según los
+    // filtros activos) siempre se restaura al terminar.
+    renderAnalysis(currentList);
+    renderActividades(currentList);
+  }
   return images;
 }
 
