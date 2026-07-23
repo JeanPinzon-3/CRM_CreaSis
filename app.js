@@ -269,6 +269,7 @@ function rowToRegistro(row, sheetName, fileName){
 
   const tipoDirect = pick(['tipo solicitud','tipo']);
   const tipo = tipoDirect ? String(tipoDirect) : inferTipo(sheetName, fileName);
+  const programado = String(pick(['programado']));
 
   const diagnostico = String(pick(['diagnostico','observaciones','accion a tomar']));
   const accion = String(pick(['respuesta escalamiento','accion','resultado']));
@@ -307,7 +308,7 @@ function rowToRegistro(row, sheetName, fileName){
   });
 
   return {
-    id: genId(), fecha, proceso, servidor, responsable, estado, escalamiento, tiempo, tipo,
+    id: genId(), fecha, proceso, servidor, responsable, estado, escalamiento, tiempo, tipo, programado,
     diagnostico, accion, extra: extraParts.join(' | '), actividades,
     origen: fileName + ' · ' + sheetName,
     raw: row, // fila 100% original, sin procesar, tal como la entregó SheetJS
@@ -426,9 +427,17 @@ function renderTable(list){
 // --- Gráficos con Chart.js: cada panel guarda su tipo elegido (barras
 // horizontales/verticales o torta) y los últimos datos, para poder
 // redibujar al instante cuando el usuario cambia el tipo sin recalcular. ---
-const chartState = {};   // id -> { type, items, opts, instance }
+if(typeof ChartDataLabels !== 'undefined'){ Chart.register(ChartDataLabels); }
+
+const chartState = {
+  // Estos dos arrancan en barras verticales para que se parezcan a los
+  // gráficos de referencia (conteo por ambiente / por tipo de solicitud).
+  chartAmbienteConteo: { type:'vbar' },
+  chartTipoSolicitud: { type:'vbar' },
+};
 const PIE_PALETTE = ['#4FD1C5','#5B8DEF','#F5A524','#E5484D','#3DD68C','#9F7AEA','#F56565','#38B2AC','#ED8936','#667EEA','#48BB78','#ECC94B','#FC8181','#4299E1','#B794F4'];
 const COLOR_MAP = { 'c-danger':'#E5484D', 'c-info':'#5B8DEF', 'c-warn':'#F5A524', '':'#4FD1C5' };
+const SERIES_COLORS = ['#5B8DEF', '#1F3A93', '#3DD68C', '#F5A524'];
 
 function cleanLabel(s){
   return String(s).replace(/[\r\n]+/g,' ').replace(/\s+/g,' ').trim();
@@ -436,9 +445,29 @@ function cleanLabel(s){
 
 function renderChartData(id, items, opts={}){
   chartState[id] = chartState[id] || { type:'hbar' };
+  chartState[id].grouped = false;
   chartState[id].items = items;
   chartState[id].opts = opts;
   drawChart(id);
+}
+
+// Gráfico de barras agrupadas (varias series por categoría), ej.
+// "Solicitudes por tipo" separado por Programado / No Programado.
+function renderGroupedChart(id, categories, series, opts={}){
+  chartState[id] = chartState[id] || { type:'vbar' };
+  chartState[id].grouped = true;
+  chartState[id].categories = categories;
+  chartState[id].series = series;
+  chartState[id].opts = opts;
+  drawChart(id);
+}
+
+function datalabelsFor(suffix, color){
+  return {
+    color: color || '#E8ECF1',
+    font: { size:10, weight:'600' },
+    formatter: v => (v===0 ? '' : v + (suffix||'')),
+  };
 }
 
 function drawChart(id){
@@ -449,6 +478,69 @@ function drawChart(id){
   if(!canvas) return;
   if(state.instance){ state.instance.destroy(); state.instance = null; }
 
+  const gridColor = '#2A3340', tickColor = '#8894A3', textColor = '#E8ECF1';
+  const opts = state.opts || {};
+  const suffix = opts.suffix || '';
+
+  if(state.grouped){
+    const categories = state.categories || [];
+    const series = state.series || [];
+    const hasData = categories.length && series.some(s=>(s.data||[]).some(v=>v>0));
+    if(!hasData){
+      canvas.style.display = 'none';
+      if(emptyEl) emptyEl.style.display = 'block';
+      return;
+    }
+    canvas.style.display = 'block';
+    if(emptyEl) emptyEl.style.display = 'none';
+
+    let cfg;
+    if(state.type === 'pie'){
+      const totals = categories.map((c,i)=> series.reduce((acc,s)=>acc+(s.data[i]||0),0));
+      cfg = {
+        type:'pie',
+        data:{ labels: categories, datasets:[{ data: totals, backgroundColor: categories.map((_,i)=>PIE_PALETTE[i % PIE_PALETTE.length]), borderColor:'#171D25', borderWidth:2 }] },
+        options:{
+          animation:false, maintainAspectRatio:false,
+          plugins:{
+            legend:{ position:'right', labels:{ color:textColor, boxWidth:11, font:{size:10.5}, padding:8 } },
+            tooltip:{ callbacks:{ label: ctx => ctx.label + ': ' + ctx.parsed + suffix } },
+            datalabels: datalabelsFor(suffix, '#0F1318'),
+          }
+        }
+      };
+    } else {
+      const horizontal = state.type === 'hbar';
+      cfg = {
+        type:'bar',
+        data:{
+          labels: categories,
+          datasets: series.map((s,i)=>({
+            label: s.name, data: s.data,
+            backgroundColor: SERIES_COLORS[i % SERIES_COLORS.length],
+            borderRadius:3, maxBarThickness:30,
+          }))
+        },
+        options:{
+          animation:false,
+          indexAxis: horizontal ? 'y' : 'x',
+          maintainAspectRatio:false,
+          plugins:{
+            legend:{ display:true, position:'top', align:'end', labels:{ color:textColor, boxWidth:11, font:{size:10.5} } },
+            tooltip:{ callbacks:{ label: ctx => ctx.dataset.label + ': ' + (horizontal ? ctx.parsed.x : ctx.parsed.y) + suffix } },
+            datalabels: datalabelsFor(suffix),
+          },
+          scales:{
+            x:{ ticks:{ color: tickColor, font:{size:10} }, grid:{ color: horizontal ? gridColor : 'transparent' } },
+            y:{ ticks:{ color: tickColor, font:{size:10} }, grid:{ color: horizontal ? 'transparent' : gridColor } }
+          }
+        }
+      };
+    }
+    state.instance = new Chart(canvas.getContext('2d'), cfg);
+    return;
+  }
+
   const items = state.items || [];
   if(!items.length){
     canvas.style.display = 'none';
@@ -458,12 +550,9 @@ function drawChart(id){
   canvas.style.display = 'block';
   if(emptyEl) emptyEl.style.display = 'none';
 
-  const opts = state.opts || {};
   const labels = items.map(i=>i.label);
   const data = items.map(i=>i.value);
   const baseColor = COLOR_MAP[opts.colorClass] || COLOR_MAP[''];
-  const suffix = opts.suffix || '';
-  const gridColor = '#2A3340', tickColor = '#8894A3', textColor = '#E8ECF1';
 
   let cfg;
   if(state.type === 'pie'){
@@ -475,7 +564,8 @@ function drawChart(id){
         maintainAspectRatio:false,
         plugins:{
           legend:{ position:'right', labels:{ color:textColor, boxWidth:11, font:{size:10.5}, padding:8 } },
-          tooltip:{ callbacks:{ label: ctx => ctx.label + ': ' + ctx.parsed + suffix } }
+          tooltip:{ callbacks:{ label: ctx => ctx.label + ': ' + ctx.parsed + suffix } },
+          datalabels: datalabelsFor(suffix, '#0F1318'),
         }
       }
     };
@@ -490,7 +580,8 @@ function drawChart(id){
         maintainAspectRatio:false,
         plugins:{
           legend:{ display:false },
-          tooltip:{ callbacks:{ label: ctx => (horizontal ? ctx.parsed.x : ctx.parsed.y) + suffix } }
+          tooltip:{ callbacks:{ label: ctx => (horizontal ? ctx.parsed.x : ctx.parsed.y) + suffix } },
+          datalabels: datalabelsFor(suffix),
         },
         scales:{
           x:{ ticks:{ color: tickColor, font:{size:10.5} }, grid:{ color: horizontal ? gridColor : 'transparent' } },
@@ -531,6 +622,17 @@ function renderAnalysis(list){
     .slice(0,8);
   renderChartData('chartServidor', itemsServidor, {colorClass:'c-danger'});
 
+  // Cantidad de pasos (registros) por ambiente / servidor — conteo total,
+  // no solo fallas, similar al gráfico "Recuento por AMBIENTE" de Power BI.
+  const conteoPorAmbiente = {};
+  list.filter(r=>r.servidor).forEach(r=>{
+    conteoPorAmbiente[r.servidor] = (conteoPorAmbiente[r.servidor]||0) + 1;
+  });
+  const itemsAmbienteConteo = Object.entries(conteoPorAmbiente)
+    .map(([label,value])=>({label,value}))
+    .sort((a,b)=>b.value-a.value);
+  renderChartData('chartAmbienteConteo', itemsAmbienteConteo, {colorClass:''});
+
   // Tiempo promedio por responsable
   const tiemposPorResp = {};
   list.filter(r=>r.responsable && typeof r.tiempo === 'number').forEach(r=>{
@@ -554,6 +656,38 @@ function renderAnalysis(list){
     .sort((a,b)=>b.value-a.value)
     .slice(0,8);
   renderChartData('chartAmbiente', itemsAmbiente, {colorClass:'c-info', suffix:' min'});
+
+  renderTipoSolicitud(list);
+}
+
+// Solicitudes por tipo (ej. "Paso a pruebas", "Paso Producción"...),
+// separadas por la columna PROGRAMADO / No Programado del Excel — igual
+// al gráfico agrupado de referencia.
+function renderTipoSolicitud(list){
+  const conData = list.filter(r=>r.tipo);
+  const porTipo = {};
+  const progValues = new Set();
+  conData.forEach(r=>{
+    const prog = r.programado || 'No especificado';
+    progValues.add(prog);
+    if(!porTipo[r.tipo]) porTipo[r.tipo] = {};
+    porTipo[r.tipo][prog] = (porTipo[r.tipo][prog]||0) + 1;
+  });
+  const categories = Object.keys(porTipo).sort((a,b)=>{
+    const totalA = Object.values(porTipo[a]).reduce((x,y)=>x+y,0);
+    const totalB = Object.values(porTipo[b]).reduce((x,y)=>x+y,0);
+    return totalB - totalA;
+  });
+  const preferredOrder = ['No Programado','Programado'];
+  const progList = Array.from(progValues).sort((a,b)=>{
+    const ia = preferredOrder.indexOf(a), ib = preferredOrder.indexOf(b);
+    if(ia===-1 && ib===-1) return a.localeCompare(b,'es');
+    if(ia===-1) return 1;
+    if(ib===-1) return -1;
+    return ia-ib;
+  });
+  const series = progList.map(p=>({ name:p, data: categories.map(c=> (porTipo[c][p]||0)) }));
+  renderGroupedChart('chartTipoSolicitud', categories, series, {});
 }
 
 // --- Selección local de actividades (dentro de la pestaña "Actividades
@@ -963,8 +1097,10 @@ function captureReportCharts(list){
     renderActividades(list);
     images = {
       servidor: captureChartImage('chartServidor'),
+      ambienteConteo: captureChartImage('chartAmbienteConteo'),
       responsable: captureChartImage('chartResponsable'),
       ambiente: captureChartImage('chartAmbiente'),
+      tipoSolicitud: captureChartImage('chartTipoSolicitud'),
       actividades: captureChartImage('chartActividades'),
     };
   });
@@ -1075,20 +1211,22 @@ function generarInformePDF(list, meta){
   }
   if(!topServidores.length && !topResponsables.length && !topAmbientes.length){ y += 6; doc.text('Sin datos suficientes.', col1, y); }
 
-  // Página de gráficos: se capturan los mismos 4 gráficos del panel
-  // (fallas por servidor, tiempo por responsable, tiempo por ambiente,
-  // actividades por tipo), pero calculados exactamente con los datos de
-  // este informe (periodo / actividad elegidos), no necesariamente lo que
-  // se ve en pantalla en este momento.
+  // Páginas de gráficos: se capturan los 6 gráficos del panel (fallas por
+  // servidor, cantidad de pasos por ambiente, tiempo por responsable,
+  // tiempo por ambiente, solicitudes por tipo, actividades por tipo),
+  // calculados exactamente con los datos de este informe (periodo /
+  // actividad elegidos), no necesariamente lo que se ve en pantalla ahora.
   const chartImages = captureReportCharts(list);
+
+  // Página 1: los 4 gráficos de barra simple, en cuadrícula 2x2.
   doc.addPage();
   doc.setTextColor(20); doc.setFont('helvetica','bold'); doc.setFontSize(13);
   doc.text('Gráficos', 14, 16);
   doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(100);
   doc.text('Calculados sobre los ' + total + ' registro(s) de este informe.', 14, 21);
 
-  const gTitles = ['Fallas por servidor / instancia', 'Tiempo promedio por responsable', 'Tiempo promedio por ambiente', 'Actividades por tipo'];
-  const gImages = [chartImages.servidor, chartImages.responsable, chartImages.ambiente, chartImages.actividades];
+  const gTitles = ['Fallas por servidor / instancia', 'Cantidad de pasos por ambiente', 'Tiempo promedio por responsable', 'Tiempo promedio por ambiente'];
+  const gImages = [chartImages.servidor, chartImages.ambienteConteo, chartImages.responsable, chartImages.ambiente];
   const gMargin = 14, gGap = 8;
   const cellW = (pageWidth - gMargin*2 - gGap) / 2;
   const cellH = 78;
@@ -1101,6 +1239,27 @@ function generarInformePDF(list, meta){
     doc.text(gTitles[i], x, yTop);
     if(gImages[i]){
       addImageFit(doc, gImages[i], x, yTop + 3, cellW, cellH);
+    } else {
+      doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(140);
+      doc.text('Sin datos suficientes para este gráfico.', x, yTop + 12);
+    }
+  }
+
+  // Página 2: los 2 gráficos más anchos (solicitudes por tipo y
+  // actividades por tipo), apilados a todo el ancho de la página.
+  doc.addPage();
+  doc.setTextColor(20); doc.setFont('helvetica','bold'); doc.setFontSize(13);
+  doc.text('Gráficos (continuación)', 14, 16);
+  const wideTitles = ['Solicitudes por tipo', 'Actividades por tipo'];
+  const wideImages = [chartImages.tipoSolicitud, chartImages.actividades];
+  const wideW = pageWidth - gMargin*2, wideH = 80;
+  const wideRowsY = [26, 26 + wideH + 14];
+  for(let i=0;i<2;i++){
+    const x = gMargin, yTop = wideRowsY[i];
+    doc.setTextColor(20); doc.setFont('helvetica','bold'); doc.setFontSize(10);
+    doc.text(wideTitles[i], x, yTop);
+    if(wideImages[i]){
+      addImageFit(doc, wideImages[i], x, yTop + 3, wideW, wideH);
     } else {
       doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(140);
       doc.text('Sin datos suficientes para este gráfico.', x, yTop + 12);

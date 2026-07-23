@@ -9,6 +9,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"></script>
 </head>
 <body>
 
@@ -57,7 +58,7 @@
   <div class="tabpanel active" id="tab-resumen">
     <div class="stats" id="stats"></div>
 
-    <div class="analysis analysis-3">
+    <div class="analysis">
       <div class="chart-panel">
         <div class="chart-panel-head">
           <div>
@@ -73,6 +74,23 @@
         <div class="chart-canvas-wrap">
           <canvas id="chartServidor"></canvas>
           <div class="chart-empty" id="chartServidor-empty" style="display:none">Sin datos para los filtros actuales.</div>
+        </div>
+      </div>
+      <div class="chart-panel">
+        <div class="chart-panel-head">
+          <div>
+            <h2>Cantidad de pasos por ambiente</h2>
+            <div class="sub">Total de registros por servidor / ambiente</div>
+          </div>
+          <div class="chart-type-toggle" data-target="chartAmbienteConteo">
+            <button type="button" class="ctbtn active" data-type="vbar" title="Barras verticales">▥</button>
+            <button type="button" class="ctbtn" data-type="hbar" title="Barras horizontales">▤</button>
+            <button type="button" class="ctbtn" data-type="pie" title="Torta">◔</button>
+          </div>
+        </div>
+        <div class="chart-canvas-wrap">
+          <canvas id="chartAmbienteConteo"></canvas>
+          <div class="chart-empty" id="chartAmbienteConteo-empty" style="display:none">Sin datos para los filtros actuales.</div>
         </div>
       </div>
       <div class="chart-panel">
@@ -108,6 +126,24 @@
           <canvas id="chartAmbiente"></canvas>
           <div class="chart-empty" id="chartAmbiente-empty" style="display:none">Sin datos para los filtros actuales.</div>
         </div>
+      </div>
+    </div>
+
+    <div class="chart-panel chart-panel-wide">
+      <div class="chart-panel-head">
+        <div>
+          <h2>Solicitudes por tipo</h2>
+          <div class="sub">Cantidad por tipo de solicitud, separado por Programado / No Programado</div>
+        </div>
+        <div class="chart-type-toggle" data-target="chartTipoSolicitud">
+          <button type="button" class="ctbtn active" data-type="vbar" title="Barras verticales">▥</button>
+          <button type="button" class="ctbtn" data-type="hbar" title="Barras horizontales">▤</button>
+          <button type="button" class="ctbtn" data-type="pie" title="Torta (total, sin separar)">◔</button>
+        </div>
+      </div>
+      <div class="chart-canvas-wrap chart-canvas-wrap-tall">
+        <canvas id="chartTipoSolicitud"></canvas>
+        <div class="chart-empty" id="chartTipoSolicitud-empty" style="display:none">Sin datos para los filtros actuales.</div>
       </div>
     </div>
   </div>
@@ -156,8 +192,8 @@
   <p class="hint">
     <b>Cómo funciona:</b> los datos viven en esta pestaña mientras la usas — no hay servidor detrás.
     Puedes seleccionar <b>varios archivos Excel a la vez</b>; el panel revisa todas las hojas de cada libro y toma automáticamente las que parecen bitácoras de registros (fecha, servidor, job, responsable, estado, escalamiento, tiempo...), ignorando hojas de referencia, calendario o plantillas vacías.
-    Las tarjetas, los gráficos y la tabla <b>responden a los filtros</b> de arriba (búsqueda, estado, tipo, archivo), sin importar en qué pestaña estés. Usa <b>Exportar Excel</b> para descargar lo que esté filtrado en pantalla, o <b>Generar informe PDF</b> para un resumen listo para compartir con tu supervisor.
-    Cualquier columna del Excel que no encaje en los campos principales se conserva en <b>"Info. adicional"</b>, y las columnas numéricas de conteo (ETL, Job, Script...) se suman en la pestaña <b>"Actividades por tipo"</b> — nada se descarta. Si dudas de si una columna se leyó bien, usa el botón <b>"Ver original"</b> en cada fila para ver exactamente lo que el navegador leyó de esa celda en Excel.
+    Las tarjetas, los gráficos y la tabla <b>responden a los filtros</b> de arriba (búsqueda, estado, tipo, archivo), sin importar en qué pestaña estés. Todos los gráficos muestran su valor numérico directamente sobre las barras, y puedes cambiar entre barras horizontales, verticales o torta con los botones de cada panel. Usa <b>Exportar Excel</b> para descargar lo que esté filtrado en pantalla, o <b>Generar informe PDF</b> para un resumen (con gráficos incluidos) listo para compartir con tu supervisor.
+    Cualquier columna del Excel que no encaje en los campos principales se conserva en <b>"Info. adicional"</b>, y las columnas numéricas de conteo (ETL, Job, Script...) se suman de forma individual (un mismo registro puede aportar a varias actividades a la vez) en la pestaña <b>"Actividades por tipo"</b>, donde puedes elegir ver una, varias o todas — nada se descarta. Si dudas de si una columna se leyó bien, usa el botón <b>"Ver original"</b> en cada fila para ver exactamente lo que el navegador leyó de esa celda en Excel.
   </p>
 </main>
 
