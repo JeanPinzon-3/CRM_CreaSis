@@ -220,6 +220,29 @@ tbody tr:last-child td{ border-bottom:none; }
 .chart-canvas-wrap{ position:relative; height:250px; }
 .chart-canvas-wrap-tall{ height:360px; }
 
+.chart-body{ display:flex; gap:16px; align-items:stretch; }
+.chart-body .chart-canvas-wrap{ flex:1 1 60%; min-width:0; }
+.chart-side-table-wrap{
+  flex:0 0 210px; max-height:250px; overflow-y:auto;
+  border:1px solid var(--border); border-radius:10px; background:var(--panel-2);
+}
+.chart-side-table-wrap.tall{ max-height:360px; }
+table.side-table{ width:100%; border-collapse:collapse; font-size:12px; }
+table.side-table th{
+  position:sticky; top:0; background:var(--panel-2); text-align:left;
+  padding:8px 10px; font-size:10px; color:var(--muted); text-transform:uppercase;
+  letter-spacing:.04em; border-bottom:1px solid var(--border);
+}
+table.side-table th.num{ text-align:right; }
+table.side-table td{ padding:7px 10px; border-bottom:1px solid var(--border); color:var(--text); }
+table.side-table td.num{ text-align:right; font-family:var(--mono); color:var(--muted); white-space:nowrap; }
+table.side-table tr.total-row td{ font-weight:700; color:var(--text); border-top:1px solid var(--border); border-bottom:none; }
+table.side-table tr:last-child td{ border-bottom:none; }
+@media (max-width:900px){
+  .chart-body{ flex-direction:column; }
+  .chart-side-table-wrap{ flex:1 1 auto; max-height:180px; }
+}
+
 .radio-group{ display:flex; flex-direction:column; gap:10px; font-size:13px; font-weight:400; text-transform:none; letter-spacing:0; color:var(--text); }
 .radio-group label{ display:flex; align-items:center; gap:8px; cursor:pointer; }
 .radio-group input{ accent-color: var(--accent); width:15px; height:15px; }

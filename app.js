@@ -470,6 +470,24 @@ function datalabelsFor(suffix, color){
   };
 }
 
+// Llena la tabla lateral de "Etiqueta | Cantidad | %" que acompaña a cada
+// gráfico, para poder ver el desglose exacto (y el porcentaje sobre el
+// total) sin depender de pasar el mouse sobre las barras.
+function renderSideTable(id, items, opts={}){
+  const table = document.getElementById(id + '-table');
+  if(!table) return;
+  if(!items || !items.length){ table.innerHTML = ''; return; }
+  const suffix = opts.suffix || '';
+  const total = items.reduce((a,b)=>a + (b.value||0), 0);
+  const rows = items.map(i=>{
+    const pct = total ? (i.value/total*100) : 0;
+    return `<tr><td title="${escapeHtml(i.label)}">${escapeHtml(i.label)}</td><td class="num">${i.value}${suffix}</td><td class="num">${pct.toFixed(1)}%</td></tr>`;
+  }).join('');
+  table.innerHTML =
+    '<thead><tr><th>' + (opts.labelHeader || 'Etiqueta') + '</th><th class="num">' + (opts.valueHeader || 'Cant.') + '</th><th class="num">%</th></tr></thead>' +
+    '<tbody>' + rows + '<tr class="total-row"><td>Total</td><td class="num">' + total + suffix + '</td><td class="num">100%</td></tr></tbody>';
+}
+
 function drawChart(id){
   const state = chartState[id];
   if(!state) return;
@@ -491,10 +509,16 @@ function drawChart(id){
       if(!hasData){
         canvas.style.display = 'none';
         if(emptyEl){ emptyEl.style.display = 'block'; emptyEl.textContent = emptyEl.dataset.defaultText; }
+        renderSideTable(id, []);
         return;
       }
       canvas.style.display = 'block';
       if(emptyEl) emptyEl.style.display = 'none';
+      renderSideTable(
+        id,
+        categories.map((c,i)=>({ label:c, value: series.reduce((acc,s)=>acc+(s.data[i]||0),0) })),
+        { labelHeader: opts.labelHeader || 'Tipo', valueHeader: 'Total' }
+      );
 
       let cfg;
       if(state.type === 'pie'){
@@ -547,10 +571,12 @@ function drawChart(id){
     if(!items.length){
       canvas.style.display = 'none';
       if(emptyEl){ emptyEl.style.display = 'block'; emptyEl.textContent = emptyEl.dataset.defaultText; }
+      renderSideTable(id, []);
       return;
     }
     canvas.style.display = 'block';
     if(emptyEl) emptyEl.style.display = 'none';
+    renderSideTable(id, items, { labelHeader: opts.labelHeader || 'Etiqueta', valueHeader: opts.valueHeader || 'Cant.', suffix: opts.suffix });
 
     const labels = items.map(i=>i.label);
     const data = items.map(i=>i.value);
@@ -603,6 +629,7 @@ function drawChart(id){
       emptyEl.style.display = 'block';
       emptyEl.textContent = 'No se pudo dibujar este gráfico (ver consola del navegador para más detalle).';
     }
+    renderSideTable(id, []);
   }
 }
 
@@ -624,6 +651,18 @@ document.querySelectorAll('.chart-type-toggle').forEach(group=>{
 });
 
 function renderAnalysis(list){
+  // Pasos por servicio / aplicación — cuántos pasos solicitó cada
+  // servicio (SSAS, COMRIC, SISPOS...), el gráfico "estrella" del resumen.
+  const porServicio = {};
+  list.filter(r=>r.proceso).forEach(r=>{
+    porServicio[r.proceso] = (porServicio[r.proceso]||0) + 1;
+  });
+  const itemsServicio = Object.entries(porServicio)
+    .map(([label,value])=>({label,value}))
+    .sort((a,b)=>b.value-a.value)
+    .slice(0,15);
+  renderChartData('chartServicio', itemsServicio, {colorClass:'', labelHeader:'Servicio', valueHeader:'Pasos'});
+
   // Fallas por servidor
   const porServidor = {};
   list.filter(r=>r.estado==='Fallido' && r.servidor).forEach(r=>{
@@ -633,7 +672,7 @@ function renderAnalysis(list){
     .map(([label,value])=>({label,value}))
     .sort((a,b)=>b.value-a.value)
     .slice(0,8);
-  renderChartData('chartServidor', itemsServidor, {colorClass:'c-danger'});
+  renderChartData('chartServidor', itemsServidor, {colorClass:'c-danger', labelHeader:'Servidor', valueHeader:'Fallas'});
 
   // Cantidad de pasos (registros) por ambiente / servidor — conteo total,
   // no solo fallas, similar al gráfico "Recuento por AMBIENTE" de Power BI.
@@ -644,7 +683,7 @@ function renderAnalysis(list){
   const itemsAmbienteConteo = Object.entries(conteoPorAmbiente)
     .map(([label,value])=>({label,value}))
     .sort((a,b)=>b.value-a.value);
-  renderChartData('chartAmbienteConteo', itemsAmbienteConteo, {colorClass:''});
+  renderChartData('chartAmbienteConteo', itemsAmbienteConteo, {colorClass:'', labelHeader:'Ambiente', valueHeader:'Pasos'});
 
   // Tiempo promedio por responsable
   const tiemposPorResp = {};
@@ -656,7 +695,7 @@ function renderAnalysis(list){
     .map(([label,vals])=>({label, value:Math.round(vals.reduce((a,b)=>a+b,0)/vals.length)}))
     .sort((a,b)=>b.value-a.value)
     .slice(0,8);
-  renderChartData('chartResponsable', itemsResp, {colorClass:'c-info', suffix:' min'});
+  renderChartData('chartResponsable', itemsResp, {colorClass:'c-info', suffix:' min', labelHeader:'Responsable', valueHeader:'Prom.'});
 
   // Tiempo promedio por ambiente / servidor
   const tiemposPorAmbiente = {};
@@ -668,7 +707,7 @@ function renderAnalysis(list){
     .map(([label,vals])=>({label, value:Math.round(vals.reduce((a,b)=>a+b,0)/vals.length)}))
     .sort((a,b)=>b.value-a.value)
     .slice(0,8);
-  renderChartData('chartAmbiente', itemsAmbiente, {colorClass:'c-info', suffix:' min'});
+  renderChartData('chartAmbiente', itemsAmbiente, {colorClass:'c-info', suffix:' min', labelHeader:'Ambiente', valueHeader:'Prom.'});
 
   renderTipoSolicitud(list);
 }
@@ -700,7 +739,7 @@ function renderTipoSolicitud(list){
     return ia-ib;
   });
   const series = progList.map(p=>({ name:p, data: categories.map(c=> (porTipo[c][p]||0)) }));
-  renderGroupedChart('chartTipoSolicitud', categories, series, {});
+  renderGroupedChart('chartTipoSolicitud', categories, series, { labelHeader:'Tipo solicitud' });
 }
 
 // --- Selección local de actividades (dentro de la pestaña "Actividades
@@ -770,7 +809,7 @@ function renderActividades(list){
     .map(([label,value])=>({label,value}))
     .filter(i=>i.value > 0)
     .sort((a,b)=>b.value-a.value);
-  renderChartData('chartActividades', items, {colorClass:'c-warn'});
+  renderChartData('chartActividades', items, {colorClass:'c-warn', labelHeader:'Actividad', valueHeader:'Total'});
 }
 
 function updateViews(){
@@ -1110,6 +1149,7 @@ function captureReportCharts(list){
       renderAnalysis(list);
       renderActividades(list);
       images = {
+        servicio: captureChartImage('chartServicio'),
         servidor: captureChartImage('chartServidor'),
         ambienteConteo: captureChartImage('chartAmbienteConteo'),
         responsable: captureChartImage('chartResponsable'),
@@ -1231,26 +1271,38 @@ function generarInformePDF(list, meta){
   }
   if(!topServidores.length && !topResponsables.length && !topAmbientes.length){ y += 6; doc.text('Sin datos suficientes.', col1, y); }
 
-  // Páginas de gráficos: se capturan los 6 gráficos del panel (fallas por
-  // servidor, cantidad de pasos por ambiente, tiempo por responsable,
-  // tiempo por ambiente, solicitudes por tipo, actividades por tipo),
-  // calculados exactamente con los datos de este informe (periodo /
-  // actividad elegidos), no necesariamente lo que se ve en pantalla ahora.
+  // Páginas de gráficos: se capturan los 7 gráficos del panel (pasos por
+  // servicio, fallas por servidor, cantidad de pasos por ambiente, tiempo
+  // por responsable, tiempo por ambiente, solicitudes por tipo,
+  // actividades por tipo), calculados exactamente con los datos de este
+  // informe (periodo / actividad elegidos), no lo que se ve en pantalla.
   const chartImages = captureReportCharts(list);
+  const gMargin = 14;
 
-  // Página 1: los 4 gráficos de barra simple, en cuadrícula 2x2.
+  // Página 1: el gráfico "estrella" (pasos por servicio/aplicación), a
+  // todo el ancho, con más alto porque puede traer hasta 15 barras.
   doc.addPage();
   doc.setTextColor(20); doc.setFont('helvetica','bold'); doc.setFontSize(13);
   doc.text('Gráficos', 14, 16);
   doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(100);
   doc.text('Calculados sobre los ' + total + ' registro(s) de este informe.', 14, 21);
+  doc.setTextColor(20); doc.setFont('helvetica','bold'); doc.setFontSize(11);
+  doc.text('Pasos por servicio / aplicación', gMargin, 30);
+  if(chartImages.servicio){
+    addImageFit(doc, chartImages.servicio, gMargin, 34, pageWidth - gMargin*2, 165);
+  } else {
+    doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(140);
+    doc.text('Sin datos suficientes para este gráfico.', gMargin, 45);
+  }
 
+  // Página 2: los 4 gráficos de barra simple, en cuadrícula 2x2.
+  doc.addPage();
   const gTitles = ['Fallas por servidor / instancia', 'Cantidad de pasos por ambiente', 'Tiempo promedio por responsable', 'Tiempo promedio por ambiente'];
   const gImages = [chartImages.servidor, chartImages.ambienteConteo, chartImages.responsable, chartImages.ambiente];
-  const gMargin = 14, gGap = 8;
+  const gGap = 8;
   const cellW = (pageWidth - gMargin*2 - gGap) / 2;
   const cellH = 78;
-  const rowsY = [28, 28 + cellH + 14];
+  const rowsY = [16, 16 + cellH + 14];
   for(let i=0;i<4;i++){
     const col = i % 2, row = Math.floor(i/2);
     const x = gMargin + col*(cellW+gGap);
@@ -1265,7 +1317,7 @@ function generarInformePDF(list, meta){
     }
   }
 
-  // Página 2: los 2 gráficos más anchos (solicitudes por tipo y
+  // Página 3: los 2 gráficos más anchos (solicitudes por tipo y
   // actividades por tipo), apilados a todo el ancho de la página.
   doc.addPage();
   doc.setTextColor(20); doc.setFont('helvetica','bold'); doc.setFontSize(13);

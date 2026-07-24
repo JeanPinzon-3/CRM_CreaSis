@@ -58,74 +58,24 @@
   <div class="tabpanel active" id="tab-resumen">
     <div class="stats" id="stats"></div>
 
-    <div class="analysis">
-      <div class="chart-panel">
-        <div class="chart-panel-head">
-          <div>
-            <h2>Fallas por servidor / instancia</h2>
-            <div class="sub">Top servidores con más registros en estado "Fallido"</div>
-          </div>
-          <div class="chart-type-toggle" data-target="chartServidor">
-            <button type="button" class="ctbtn active" data-type="hbar" title="Barras horizontales">▤</button>
-            <button type="button" class="ctbtn" data-type="vbar" title="Barras verticales">▥</button>
-            <button type="button" class="ctbtn" data-type="pie" title="Torta">◔</button>
-          </div>
+    <div class="chart-panel chart-panel-wide">
+      <div class="chart-panel-head">
+        <div>
+          <h2>Pasos por servicio / aplicación</h2>
+          <div class="sub">Top servicios/aplicaciones con más pasos solicitados (ej. SSAS, COMRIC, SISPOS...)</div>
         </div>
-        <div class="chart-canvas-wrap">
-          <canvas id="chartServidor"></canvas>
-          <div class="chart-empty" id="chartServidor-empty" style="display:none">Sin datos para los filtros actuales.</div>
+        <div class="chart-type-toggle" data-target="chartServicio">
+          <button type="button" class="ctbtn active" data-type="hbar" title="Barras horizontales">▤</button>
+          <button type="button" class="ctbtn" data-type="vbar" title="Barras verticales">▥</button>
+          <button type="button" class="ctbtn" data-type="pie" title="Torta">◔</button>
         </div>
       </div>
-      <div class="chart-panel">
-        <div class="chart-panel-head">
-          <div>
-            <h2>Cantidad de pasos por ambiente</h2>
-            <div class="sub">Total de registros por servidor / ambiente</div>
-          </div>
-          <div class="chart-type-toggle" data-target="chartAmbienteConteo">
-            <button type="button" class="ctbtn active" data-type="vbar" title="Barras verticales">▥</button>
-            <button type="button" class="ctbtn" data-type="hbar" title="Barras horizontales">▤</button>
-            <button type="button" class="ctbtn" data-type="pie" title="Torta">◔</button>
-          </div>
+      <div class="chart-body">
+        <div class="chart-canvas-wrap chart-canvas-wrap-tall">
+          <canvas id="chartServicio"></canvas>
+          <div class="chart-empty" id="chartServicio-empty" style="display:none">Sin datos para los filtros actuales.</div>
         </div>
-        <div class="chart-canvas-wrap">
-          <canvas id="chartAmbienteConteo"></canvas>
-          <div class="chart-empty" id="chartAmbienteConteo-empty" style="display:none">Sin datos para los filtros actuales.</div>
-        </div>
-      </div>
-      <div class="chart-panel">
-        <div class="chart-panel-head">
-          <div>
-            <h2>Tiempo promedio por responsable</h2>
-            <div class="sub">Minutos promedio de atención, por responsable</div>
-          </div>
-          <div class="chart-type-toggle" data-target="chartResponsable">
-            <button type="button" class="ctbtn active" data-type="hbar" title="Barras horizontales">▤</button>
-            <button type="button" class="ctbtn" data-type="vbar" title="Barras verticales">▥</button>
-            <button type="button" class="ctbtn" data-type="pie" title="Torta">◔</button>
-          </div>
-        </div>
-        <div class="chart-canvas-wrap">
-          <canvas id="chartResponsable"></canvas>
-          <div class="chart-empty" id="chartResponsable-empty" style="display:none">Sin datos para los filtros actuales.</div>
-        </div>
-      </div>
-      <div class="chart-panel">
-        <div class="chart-panel-head">
-          <div>
-            <h2>Tiempo promedio por ambiente</h2>
-            <div class="sub">Minutos promedio de atención, por servidor / ambiente</div>
-          </div>
-          <div class="chart-type-toggle" data-target="chartAmbiente">
-            <button type="button" class="ctbtn active" data-type="hbar" title="Barras horizontales">▤</button>
-            <button type="button" class="ctbtn" data-type="vbar" title="Barras verticales">▥</button>
-            <button type="button" class="ctbtn" data-type="pie" title="Torta">◔</button>
-          </div>
-        </div>
-        <div class="chart-canvas-wrap">
-          <canvas id="chartAmbiente"></canvas>
-          <div class="chart-empty" id="chartAmbiente-empty" style="display:none">Sin datos para los filtros actuales.</div>
-        </div>
+        <div class="chart-side-table-wrap tall"><table class="side-table" id="chartServicio-table"></table></div>
       </div>
     </div>
 
@@ -141,9 +91,95 @@
           <button type="button" class="ctbtn" data-type="pie" title="Torta (total, sin separar)">◔</button>
         </div>
       </div>
-      <div class="chart-canvas-wrap chart-canvas-wrap-tall">
-        <canvas id="chartTipoSolicitud"></canvas>
-        <div class="chart-empty" id="chartTipoSolicitud-empty" style="display:none">Sin datos para los filtros actuales.</div>
+      <div class="chart-body">
+        <div class="chart-canvas-wrap chart-canvas-wrap-tall">
+          <canvas id="chartTipoSolicitud"></canvas>
+          <div class="chart-empty" id="chartTipoSolicitud-empty" style="display:none">Sin datos para los filtros actuales.</div>
+        </div>
+        <div class="chart-side-table-wrap tall"><table class="side-table" id="chartTipoSolicitud-table"></table></div>
+      </div>
+    </div>
+
+    <div class="analysis">
+      <div class="chart-panel">
+        <div class="chart-panel-head">
+          <div>
+            <h2>Cantidad de pasos por ambiente</h2>
+            <div class="sub">Total de registros por servidor / ambiente</div>
+          </div>
+          <div class="chart-type-toggle" data-target="chartAmbienteConteo">
+            <button type="button" class="ctbtn active" data-type="vbar" title="Barras verticales">▥</button>
+            <button type="button" class="ctbtn" data-type="hbar" title="Barras horizontales">▤</button>
+            <button type="button" class="ctbtn" data-type="pie" title="Torta">◔</button>
+          </div>
+        </div>
+        <div class="chart-body">
+          <div class="chart-canvas-wrap">
+            <canvas id="chartAmbienteConteo"></canvas>
+            <div class="chart-empty" id="chartAmbienteConteo-empty" style="display:none">Sin datos para los filtros actuales.</div>
+          </div>
+          <div class="chart-side-table-wrap"><table class="side-table" id="chartAmbienteConteo-table"></table></div>
+        </div>
+      </div>
+      <div class="chart-panel">
+        <div class="chart-panel-head">
+          <div>
+            <h2>Tiempo promedio por ambiente</h2>
+            <div class="sub">Minutos promedio de atención, por servidor / ambiente</div>
+          </div>
+          <div class="chart-type-toggle" data-target="chartAmbiente">
+            <button type="button" class="ctbtn active" data-type="hbar" title="Barras horizontales">▤</button>
+            <button type="button" class="ctbtn" data-type="vbar" title="Barras verticales">▥</button>
+            <button type="button" class="ctbtn" data-type="pie" title="Torta">◔</button>
+          </div>
+        </div>
+        <div class="chart-body">
+          <div class="chart-canvas-wrap">
+            <canvas id="chartAmbiente"></canvas>
+            <div class="chart-empty" id="chartAmbiente-empty" style="display:none">Sin datos para los filtros actuales.</div>
+          </div>
+          <div class="chart-side-table-wrap"><table class="side-table" id="chartAmbiente-table"></table></div>
+        </div>
+      </div>
+      <div class="chart-panel">
+        <div class="chart-panel-head">
+          <div>
+            <h2>Fallas por servidor / instancia</h2>
+            <div class="sub">Top servidores con más registros en estado "Fallido"</div>
+          </div>
+          <div class="chart-type-toggle" data-target="chartServidor">
+            <button type="button" class="ctbtn active" data-type="hbar" title="Barras horizontales">▤</button>
+            <button type="button" class="ctbtn" data-type="vbar" title="Barras verticales">▥</button>
+            <button type="button" class="ctbtn" data-type="pie" title="Torta">◔</button>
+          </div>
+        </div>
+        <div class="chart-body">
+          <div class="chart-canvas-wrap">
+            <canvas id="chartServidor"></canvas>
+            <div class="chart-empty" id="chartServidor-empty" style="display:none">Sin datos para los filtros actuales.</div>
+          </div>
+          <div class="chart-side-table-wrap"><table class="side-table" id="chartServidor-table"></table></div>
+        </div>
+      </div>
+      <div class="chart-panel">
+        <div class="chart-panel-head">
+          <div>
+            <h2>Tiempo promedio por responsable</h2>
+            <div class="sub">Minutos promedio de atención, por responsable</div>
+          </div>
+          <div class="chart-type-toggle" data-target="chartResponsable">
+            <button type="button" class="ctbtn active" data-type="hbar" title="Barras horizontales">▤</button>
+            <button type="button" class="ctbtn" data-type="vbar" title="Barras verticales">▥</button>
+            <button type="button" class="ctbtn" data-type="pie" title="Torta">◔</button>
+          </div>
+        </div>
+        <div class="chart-body">
+          <div class="chart-canvas-wrap">
+            <canvas id="chartResponsable"></canvas>
+            <div class="chart-empty" id="chartResponsable-empty" style="display:none">Sin datos para los filtros actuales.</div>
+          </div>
+          <div class="chart-side-table-wrap"><table class="side-table" id="chartResponsable-table"></table></div>
+        </div>
       </div>
     </div>
   </div>
@@ -173,9 +209,12 @@
         <div class="checkbox-grid" id="act_filter_list"></div>
       </div>
 
-      <div class="chart-canvas-wrap chart-canvas-wrap-tall">
-        <canvas id="chartActividades"></canvas>
-        <div class="chart-empty" id="chartActividades-empty" style="display:none">No hay columnas de actividad detectadas en los registros filtrados.</div>
+      <div class="chart-body">
+        <div class="chart-canvas-wrap chart-canvas-wrap-tall">
+          <canvas id="chartActividades"></canvas>
+          <div class="chart-empty" id="chartActividades-empty" style="display:none">No hay columnas de actividad detectadas en los registros filtrados.</div>
+        </div>
+        <div class="chart-side-table-wrap tall"><table class="side-table" id="chartActividades-table"></table></div>
       </div>
     </div>
   </div>
