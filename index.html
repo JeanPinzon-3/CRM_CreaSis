@@ -217,6 +217,48 @@
         <div class="chart-side-table-wrap tall"><table class="side-table" id="chartActividades-table"></table></div>
       </div>
     </div>
+
+    <div class="chart-panel chart-panel-wide">
+      <div class="chart-panel-head">
+        <div>
+          <h2>Servicios por actividad</h2>
+          <div class="sub">Top 10 servicios/aplicaciones, según las actividades marcadas arriba en "Mostrar actividades"</div>
+        </div>
+        <div class="chart-type-toggle" data-target="chartServicioActividad">
+          <button type="button" class="ctbtn active" data-type="hbar" title="Barras horizontales">▤</button>
+          <button type="button" class="ctbtn" data-type="vbar" title="Barras verticales">▥</button>
+          <button type="button" class="ctbtn" data-type="pie" title="Torta (total, sin separar)">◔</button>
+        </div>
+      </div>
+      <div class="chart-body">
+        <div class="chart-canvas-wrap chart-canvas-wrap-tall">
+          <canvas id="chartServicioActividad"></canvas>
+          <div class="chart-empty" id="chartServicioActividad-empty" style="display:none">Sin datos para los filtros / actividades actuales.</div>
+        </div>
+        <div class="chart-side-table-wrap tall"><table class="side-table" id="chartServicioActividad-table"></table></div>
+      </div>
+    </div>
+
+    <div class="chart-panel chart-panel-wide">
+      <div class="chart-panel-head">
+        <div>
+          <h2>Servicios por tipo de paso</h2>
+          <div class="sub">Top 10 servicios/aplicaciones, separados por Programado / No Programado</div>
+        </div>
+        <div class="chart-type-toggle" data-target="chartServicioProgramado">
+          <button type="button" class="ctbtn active" data-type="hbar" title="Barras horizontales">▤</button>
+          <button type="button" class="ctbtn" data-type="vbar" title="Barras verticales">▥</button>
+          <button type="button" class="ctbtn" data-type="pie" title="Torta (total, sin separar)">◔</button>
+        </div>
+      </div>
+      <div class="chart-body">
+        <div class="chart-canvas-wrap chart-canvas-wrap-tall">
+          <canvas id="chartServicioProgramado"></canvas>
+          <div class="chart-empty" id="chartServicioProgramado-empty" style="display:none">Sin datos para los filtros actuales.</div>
+        </div>
+        <div class="chart-side-table-wrap tall"><table class="side-table" id="chartServicioProgramado-table"></table></div>
+      </div>
+    </div>
   </div>
 
   <div class="tabpanel" id="tab-registros">

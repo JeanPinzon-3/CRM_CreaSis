@@ -434,6 +434,10 @@ const chartState = {
   // gráficos de referencia (conteo por ambiente / por tipo de solicitud).
   chartAmbienteConteo: { type:'vbar' },
   chartTipoSolicitud: { type:'vbar' },
+  // Estos arrancan en horizontales porque los nombres de servicio son
+  // largos y se leen mejor en filas que en columnas angostas.
+  chartServicioActividad: { type:'hbar' },
+  chartServicioProgramado: { type:'hbar' },
 };
 const PIE_PALETTE = ['#4FD1C5','#5B8DEF','#F5A524','#E5484D','#3DD68C','#9F7AEA','#F56565','#38B2AC','#ED8936','#667EEA','#48BB78','#ECC94B','#FC8181','#4299E1','#B794F4'];
 const COLOR_MAP = { 'c-danger':'#E5484D', 'c-info':'#5B8DEF', 'c-warn':'#F5A524', '':'#4FD1C5' };
@@ -537,14 +541,16 @@ function drawChart(id){
         };
       } else {
         const horizontal = state.type === 'hbar';
+        const stacked = !!opts.stacked;
+        const seriesColors = SERIES_COLORS.concat(PIE_PALETTE);
         cfg = {
           type:'bar',
           data:{
             labels: categories,
             datasets: series.map((s,i)=>({
               label: s.name, data: s.data,
-              backgroundColor: SERIES_COLORS[i % SERIES_COLORS.length],
-              borderRadius:3, maxBarThickness:30,
+              backgroundColor: seriesColors[i % seriesColors.length],
+              borderRadius: stacked ? 2 : 3, maxBarThickness: stacked ? 40 : 30,
             }))
           },
           options:{
@@ -557,8 +563,8 @@ function drawChart(id){
               datalabels: datalabelsFor(suffix),
             },
             scales:{
-              x:{ ticks:{ color: tickColor, font:{size:10} }, grid:{ color: horizontal ? gridColor : 'transparent' } },
-              y:{ ticks:{ color: tickColor, font:{size:10} }, grid:{ color: horizontal ? 'transparent' : gridColor } }
+              x:{ stacked, ticks:{ color: tickColor, font:{size:10} }, grid:{ color: horizontal ? gridColor : 'transparent' } },
+              y:{ stacked, ticks:{ color: tickColor, font:{size:10} }, grid:{ color: horizontal ? 'transparent' : gridColor } }
             }
           }
         };
@@ -810,6 +816,70 @@ function renderActividades(list){
     .filter(i=>i.value > 0)
     .sort((a,b)=>b.value-a.value);
   renderChartData('chartActividades', items, {colorClass:'c-warn', labelHeader:'Actividad', valueHeader:'Total'});
+  renderServiciosPorActividad(list);
+}
+
+// Qué servicio/aplicación pidió cada tipo de actividad marcada en el
+// selector de arriba (Script, ETL, MSI...). Barras apiladas por servicio
+// (top 10), un color por actividad — si solo hay una actividad marcada,
+// queda como una barra simple por servicio.
+function renderServiciosPorActividad(list){
+  const selected = Array.from(activitySelection);
+  if(!selected.length){
+    renderGroupedChart('chartServicioActividad', [], [], {});
+    return;
+  }
+  const porServicio = {}; // servicio -> { actividad: total }
+  list.forEach(r=>{
+    if(!r.proceso) return;
+    const act = r.actividades || {};
+    Object.entries(act).forEach(([k,v])=>{
+      const label = cleanLabel(k);
+      if(!activitySelection.has(label)) return;
+      const val = typeof v === 'number' ? v : 0;
+      if(val <= 0) return;
+      if(!porServicio[r.proceso]) porServicio[r.proceso] = {};
+      porServicio[r.proceso][label] = (porServicio[r.proceso][label]||0) + val;
+    });
+  });
+  const categories = Object.keys(porServicio)
+    .map(servicio=>({ servicio, total: Object.values(porServicio[servicio]).reduce((a,b)=>a+b,0) }))
+    .sort((a,b)=>b.total-a.total)
+    .slice(0,10)
+    .map(x=>x.servicio);
+  const series = selected
+    .filter(label=>categories.some(c=>(porServicio[c]||{})[label] > 0))
+    .map(label=>({ name:label, data: categories.map(c=>(porServicio[c] && porServicio[c][label]) || 0) }));
+  renderGroupedChart('chartServicioActividad', categories, series, { labelHeader:'Servicio', stacked:true });
+}
+
+// Qué servicio/aplicación pidió pasos Programados vs No Programados —
+// top 10 servicios, barras agrupadas (igual estilo que "Solicitudes por
+// tipo" en el Resumen).
+function renderServiciosPorProgramado(list){
+  const porServicio = {}; // servicio -> { Programado: n, 'No Programado': n }
+  const progValues = new Set();
+  list.filter(r=>r.proceso).forEach(r=>{
+    const prog = r.programado || 'No especificado';
+    progValues.add(prog);
+    if(!porServicio[r.proceso]) porServicio[r.proceso] = {};
+    porServicio[r.proceso][prog] = (porServicio[r.proceso][prog]||0) + 1;
+  });
+  const categories = Object.keys(porServicio)
+    .map(servicio=>({ servicio, total: Object.values(porServicio[servicio]).reduce((a,b)=>a+b,0) }))
+    .sort((a,b)=>b.total-a.total)
+    .slice(0,10)
+    .map(x=>x.servicio);
+  const preferredOrder = ['No Programado','Programado'];
+  const progList = Array.from(progValues).sort((a,b)=>{
+    const ia = preferredOrder.indexOf(a), ib = preferredOrder.indexOf(b);
+    if(ia===-1 && ib===-1) return a.localeCompare(b,'es');
+    if(ia===-1) return 1;
+    if(ib===-1) return -1;
+    return ia-ib;
+  });
+  const series = progList.map(p=>({ name:p, data: categories.map(c=>(porServicio[c] && porServicio[c][p]) || 0) }));
+  renderGroupedChart('chartServicioProgramado', categories, series, { labelHeader:'Servicio' });
 }
 
 function updateViews(){
@@ -818,6 +888,7 @@ function updateViews(){
   renderAnalysis(list);
   renderActivityFilterList();
   renderActividades(list);
+  renderServiciosPorProgramado(list);
   renderTable(list);
 }
 
@@ -1148,6 +1219,7 @@ function captureReportCharts(list){
     withAllTabsVisible(()=>{
       renderAnalysis(list);
       renderActividades(list);
+      renderServiciosPorProgramado(list);
       images = {
         servicio: captureChartImage('chartServicio'),
         servidor: captureChartImage('chartServidor'),
@@ -1156,6 +1228,8 @@ function captureReportCharts(list){
         ambiente: captureChartImage('chartAmbiente'),
         tipoSolicitud: captureChartImage('chartTipoSolicitud'),
         actividades: captureChartImage('chartActividades'),
+        servicioActividad: captureChartImage('chartServicioActividad'),
+        servicioProgramado: captureChartImage('chartServicioProgramado'),
       };
     });
   } catch(err){
@@ -1165,6 +1239,7 @@ function captureReportCharts(list){
     // filtros activos) siempre se restaura al terminar.
     renderAnalysis(currentList);
     renderActividades(currentList);
+    renderServiciosPorProgramado(currentList);
   }
   return images;
 }
@@ -1317,24 +1392,28 @@ function generarInformePDF(list, meta){
     }
   }
 
-  // Página 3: los 2 gráficos más anchos (solicitudes por tipo y
-  // actividades por tipo), apilados a todo el ancho de la página.
-  doc.addPage();
-  doc.setTextColor(20); doc.setFont('helvetica','bold'); doc.setFontSize(13);
-  doc.text('Gráficos (continuación)', 14, 16);
-  const wideTitles = ['Solicitudes por tipo', 'Actividades por tipo'];
-  const wideImages = [chartImages.tipoSolicitud, chartImages.actividades];
+  // Páginas siguientes: los gráficos anchos (solicitudes por tipo,
+  // actividades por tipo, servicios por actividad, servicios por tipo de
+  // paso), apilados de a 2 por página a todo el ancho.
+  const wideTitles = ['Solicitudes por tipo', 'Actividades por tipo', 'Servicios por actividad', 'Servicios por tipo de paso'];
+  const wideImages = [chartImages.tipoSolicitud, chartImages.actividades, chartImages.servicioActividad, chartImages.servicioProgramado];
   const wideW = pageWidth - gMargin*2, wideH = 80;
-  const wideRowsY = [26, 26 + wideH + 14];
-  for(let i=0;i<2;i++){
-    const x = gMargin, yTop = wideRowsY[i];
-    doc.setTextColor(20); doc.setFont('helvetica','bold'); doc.setFontSize(10);
-    doc.text(wideTitles[i], x, yTop);
-    if(wideImages[i]){
-      addImageFit(doc, wideImages[i], x, yTop + 3, wideW, wideH);
-    } else {
-      doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(140);
-      doc.text('Sin datos suficientes para este gráfico.', x, yTop + 12);
+  for(let i=0;i<wideTitles.length;i+=2){
+    doc.addPage();
+    doc.setTextColor(20); doc.setFont('helvetica','bold'); doc.setFontSize(13);
+    doc.text('Gráficos (continuación)', 14, 16);
+    const wideRowsY = [26, 26 + wideH + 14];
+    for(let j=0;j<2 && i+j<wideTitles.length;j++){
+      const idx = i+j;
+      const x = gMargin, yTop = wideRowsY[j];
+      doc.setTextColor(20); doc.setFont('helvetica','bold'); doc.setFontSize(10);
+      doc.text(wideTitles[idx], x, yTop);
+      if(wideImages[idx]){
+        addImageFit(doc, wideImages[idx], x, yTop + 3, wideW, wideH);
+      } else {
+        doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(140);
+        doc.text('Sin datos suficientes para este gráfico.', x, yTop + 12);
+      }
     }
   }
   doc.addPage();
