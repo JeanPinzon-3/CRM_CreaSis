@@ -78,14 +78,6 @@ function countKeywordMatches(headerTexts){
   return matches;
 }
 
-// Detecta si una hoja del Excel "parece" una bitácora de registros
-// (fecha + servidor/job/responsable/estado...) en vez de un calendario,
-// resumen dinámico u hoja de referencia.
-function isLogSheet(rows){
-  if(!rows.length) return false;
-  return countKeywordMatches(rows.slice(0,5).flatMap(r=>Object.keys(r))) >= 2;
-}
-
 // Convierte una hoja de SheetJS en una lista de objetos fila->valor,
 // resolviendo dos problemas comunes de Excel que hacían que se perdiera
 // información al importar:
@@ -278,7 +270,10 @@ function rowToRegistro(row, sheetName, fileName){
   // Job, Creacion Job, Restauracion BD...) que traen un número (0,1,2...)
   // indicando cuántas veces se hizo esa actividad en el registro. Se
   // guardan aparte (no como texto libre) para poder sumarlas y filtrarlas
-  // en la pestaña "Actividades por tipo".
+  // en la pestaña "Actividades por tipo". La clave se normaliza aquí UNA
+  // sola vez con cleanLabel (en vez de en cada render): si dos columnas
+  // del Excel limpian al mismo nombre (ej. con distintos saltos de línea),
+  // sus valores se suman directamente.
   const actividades = {};
   Object.keys(row).forEach(k=>{
     if(usedKeys.has(k)) return;
@@ -289,7 +284,8 @@ function rowToRegistro(row, sheetName, fileName){
     if(/^-?\d+([.,]\d+)?$/.test(s)){
       const num = parseNumberLoose(s);
       if(!isNaN(num)){
-        actividades[String(k).trim()] = num;
+        const label = cleanLabel(k);
+        actividades[label] = (actividades[label] || 0) + num;
         usedKeys.add(k);
       }
     }
@@ -320,10 +316,10 @@ function estadoClass(estado){
   return map[estado] || 'b-otro';
 }
 
+const _escapeScratch = document.createElement('div');
 function escapeHtml(str){
-  const d = document.createElement('div');
-  d.textContent = str==null ? '' : String(str);
-  return d.innerHTML;
+  _escapeScratch.textContent = str==null ? '' : String(str);
+  return _escapeScratch.innerHTML;
 }
 
 function uniqueValues(field){
@@ -805,8 +801,7 @@ function renderActividades(list){
   const totales = {};
   list.forEach(r=>{
     const act = r.actividades || {};
-    Object.entries(act).forEach(([k,v])=>{
-      const label = cleanLabel(k);
+    Object.entries(act).forEach(([label,v])=>{
       if(!activitySelection.has(label)) return;
       totales[label] = (totales[label]||0) + (typeof v === 'number' ? v : 0);
     });
@@ -833,8 +828,7 @@ function renderServiciosPorActividad(list){
   list.forEach(r=>{
     if(!r.proceso) return;
     const act = r.actividades || {};
-    Object.entries(act).forEach(([k,v])=>{
-      const label = cleanLabel(k);
+    Object.entries(act).forEach(([label,v])=>{
       if(!activitySelection.has(label)) return;
       const val = typeof v === 'number' ? v : 0;
       if(val <= 0) return;
@@ -989,8 +983,20 @@ function viewRaw(id){
 el('btnCloseRaw').onclick = () => el('rawOverlay').classList.remove('open');
 el('rawOverlay').addEventListener('click', e => { if(e.target.id==='rawOverlay') el('rawOverlay').classList.remove('open'); });
 
-['search','filterEstado','filterTipo','filterOrigen'].forEach(id=>{
-  el(id).addEventListener('input', updateViews);
+// La búsqueda de texto libre se "debounce" (espera a que la persona pare de
+// escribir) porque cada actualización redibuja 9 gráficos de Chart.js y la
+// tabla completa; sin esto, cada tecla presionada dispararía ese trabajo.
+// Los selects sí actualizan al instante: no se "escribe" en ellos tecla a
+// tecla, así que no hay nada que debounce-ar.
+function debounce(fn, wait){
+  let timer;
+  return function(...args){
+    clearTimeout(timer);
+    timer = setTimeout(()=>fn.apply(this, args), wait);
+  };
+}
+el('search').addEventListener('input', debounce(updateViews, 250));
+['filterEstado','filterTipo','filterOrigen'].forEach(id=>{
   el(id).addEventListener('change', updateViews);
 });
 
@@ -1009,7 +1015,7 @@ function readFileAsync(file){
     const reader = new FileReader();
     reader.onload = evt => resolve(evt.target.result);
     reader.onerror = reject;
-    reader.readAsBinaryString(file);
+    reader.readAsArrayBuffer(file);
   });
 }
 
@@ -1025,7 +1031,7 @@ el('fileInput').addEventListener('change', async function(e){
   for(const file of files){
     try{
       const bin = await readFileAsync(file);
-      const wb = XLSX.read(bin, {type:'binary', cellDates:true});
+      const wb = XLSX.read(bin, {type:'array', cellDates:true});
       for(const sheetName of wb.SheetNames){
         const sheet = wb.Sheets[sheetName];
         const { rows } = sheetToRows(sheet);
@@ -1092,17 +1098,14 @@ const MESES_ES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agos
 function getActivityLabels(){
   const set = new Set();
   registros.forEach(r=>{
-    Object.keys(r.actividades||{}).forEach(k=> set.add(cleanLabel(k)));
+    Object.keys(r.actividades||{}).forEach(k=> set.add(k));
   });
   return Array.from(set).sort((a,b)=>a.localeCompare(b,'es'));
 }
 
 function activityValueForLabel(r, label){
-  let sum = 0;
-  Object.entries(r.actividades||{}).forEach(([k,v])=>{
-    if(cleanLabel(k)===label) sum += (typeof v==='number' ? v : 0);
-  });
-  return sum;
+  const v = (r.actividades || {})[label];
+  return typeof v === 'number' ? v : 0;
 }
 
 function periodoLabelFromValue(p){
@@ -1293,8 +1296,11 @@ function generarInformePDF(list, meta){
   // seleccionada dentro del periodo/filtros elegidos.
   if(esActividad){
     const totalesAct = meta.selectedActs.map(label=>{
-      const sum = list.reduce((acc,r)=>acc + activityValueForLabel(r,label), 0);
-      const registrosConEsa = list.filter(r=>activityValueForLabel(r,label) > 0).length;
+      let sum = 0, registrosConEsa = 0;
+      list.forEach(r=>{
+        const v = activityValueForLabel(r, label);
+        if(v > 0){ sum += v; registrosConEsa++; }
+      });
       return { label, sum, registrosConEsa };
     });
     y += 9;

@@ -182,30 +182,14 @@ tbody tr:last-child td{ border-bottom:none; }
 .analysis{
   display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:22px;
 }
-.analysis-3{ grid-template-columns:repeat(3, 1fr); }
-@media (max-width:1080px){ .analysis-3{ grid-template-columns:1fr 1fr; } }
-@media (max-width:760px){ .analysis-3{ grid-template-columns:1fr; } }
 
 .chart-panel-wide{ max-width:none; }
-.bar-fill.c-warn{ background:linear-gradient(90deg, var(--accent-dim), var(--warn)); }
-.activity-row .bar-label{ width:220px; }
-
 
 .chart-panel{
   background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:16px 18px;
 }
 .chart-panel h2{ font-size:13px; margin:0 0 4px; color:var(--muted); font-weight:600; letter-spacing:.03em;}
 .chart-panel .sub{ font-size:11.5px; color:var(--muted); margin-bottom:14px; }
-.bar-row{ display:flex; align-items:center; gap:10px; margin-bottom:10px; }
-.bar-label{
-  width:150px; flex-shrink:0; font-size:12px; color:var(--text);
-  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-}
-.bar-track{ flex:1; background:var(--panel-2); border-radius:6px; height:16px; position:relative; overflow:hidden; }
-.bar-fill{ height:100%; border-radius:6px; transition:width .4s ease; }
-.bar-fill.c-danger{ background:linear-gradient(90deg, var(--accent-dim), var(--danger)); }
-.bar-fill.c-info{ background:linear-gradient(90deg, var(--accent-dim), var(--info)); }
-.bar-value{ width:44px; flex-shrink:0; text-align:right; font-family:var(--mono); font-size:12px; color:var(--muted); }
 .chart-empty{ color:var(--muted); font-size:12.5px; padding:20px 0; text-align:center; }
 
 .chart-panel-head{ display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:14px; }
