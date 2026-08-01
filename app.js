@@ -1089,6 +1089,291 @@ el('btnExport').onclick = () => {
   XLSX.writeFile(wb, 'panel_operaciones_' + new Date().toISOString().slice(0,10) + '.xlsx');
 };
 
+// --- Exportar HTML interactivo (archivo único, autónomo) ---
+// Genera un .html independiente con los registros filtrados embebidos, con
+// sus propios filtros, gráficos y tabla — para compartir con personal que
+// no tiene acceso a este panel. Necesita internet la primera vez que se
+// abre (carga Chart.js desde el mismo CDN que usa este panel), pero no
+// depende de este panel ni de Excel para nada más.
+el('btnExportHtml').onclick = () => {
+  const list = getFilteredRegistros();
+  if(list.length===0){ alert('No hay registros para exportar con los filtros actuales.'); return; }
+  const html = buildInteractiveExportHtml(list);
+  const blob = new Blob([html], {type:'text/html;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'panel_operaciones_interactivo_' + new Date().toISOString().slice(0,10) + '.html';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url), 2000);
+};
+
+function buildInteractiveExportHtml(list){
+  // Se deja afuera el campo "raw" (fila 100% original) para que el archivo
+  // no pese de más; todo lo demás que ya se procesó sí viaja, incluidas
+  // las actividades (para los gráficos) y la info adicional.
+  const dataForExport = list.map(r=>({
+    fecha: r.fecha, proceso: r.proceso, servidor: r.servidor, responsable: r.responsable,
+    estado: r.estado, escalamiento: r.escalamiento, tiempo: r.tiempo, tipo: r.tipo,
+    programado: r.programado, extra: r.extra, actividades: r.actividades, origen: r.origen,
+  }));
+  // Escapar "<" evita que un dato con "</script>" (por ejemplo escrito a
+  // mano en "Info. adicional") rompa el archivo generado al abrirlo.
+  const dataJson = JSON.stringify(dataForExport).replace(/</g, '\\u003c');
+  const generatedAt = new Date().toLocaleString('es-CO', {dateStyle:'long', timeStyle:'short'});
+  const filtros = activeFilterLabels();
+  const filtrosTxt = filtros.length ? filtros.join(' · ') : 'Ninguno (todos los registros)';
+
+  const parts = [];
+  parts.push('<!DOCTYPE html>');
+  parts.push('<html lang="es">');
+  parts.push('<head>');
+  parts.push('<meta charset="UTF-8">');
+  parts.push('<meta name="viewport" content="width=device-width, initial-scale=1.0">');
+  parts.push('<title>Panel de Operaciones — Vista interactiva</title>');
+  parts.push('<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"><' + '/script>');
+  parts.push('<script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"><' + '/script>');
+  parts.push('<style>' + EXPORT_CSS + '</style>');
+  parts.push('</head>');
+  parts.push('<body>');
+  parts.push('<div class="topbar">');
+  parts.push('  <div class="brand"><div class="dot"></div><div>');
+  parts.push('    <h1>Panel de <span>Operaciones</span> <small class="tag">vista interactiva</small></h1>');
+  parts.push('    <small>Generado el ' + escapeHtml(generatedAt) + ' · Filtros aplicados al exportar: ' + escapeHtml(filtrosTxt) + '</small>');
+  parts.push('  </div></div>');
+  parts.push('</div>');
+  parts.push('<main>');
+  parts.push('  <div class="filterbar"><div class="filters">');
+  parts.push('    <input type="text" id="search" placeholder="Buscar proceso, servidor, responsable...">');
+  parts.push('    <select id="filterEstado"><option value="">Todos los estados</option><option>Exitoso</option><option>Fallido</option><option>Pendiente</option><option>Otro</option></select>');
+  parts.push('    <select id="filterTipo"><option value="">Todos los tipos</option></select>');
+  parts.push('    <select id="filterOrigen"><option value="">Todos los archivos</option></select>');
+  parts.push('    <span class="count-info" id="countInfo"></span>');
+  parts.push('  </div></div>');
+  parts.push('  <div class="stats" id="stats"></div>');
+  parts.push('  <div class="analysis">');
+  parts.push(chartPanelHtml('chartServicio', 'Pasos por servicio / aplicación', 'Top 10 servicios con más pasos solicitados'));
+  parts.push(chartPanelHtml('chartAmbiente', 'Cantidad de pasos por ambiente', 'Total de registros por servidor / ambiente'));
+  parts.push('  </div>');
+  parts.push('  <div class="chart-panel chart-panel-wide">');
+  parts.push('    <h2>Solicitudes por tipo</h2><div class="sub">Separado por Programado / No Programado</div>');
+  parts.push('    <div class="chart-canvas-wrap chart-canvas-wrap-tall"><canvas id="chartTipoSolicitud"></canvas></div>');
+  parts.push('  </div>');
+  parts.push('  <div class="panel"><div class="panel-head"><h2>Registros</h2></div><div id="tableWrap"></div></div>');
+  parts.push('  <p class="hint">Este archivo es una copia independiente e interactiva de los datos exportados — no está conectado al panel original, así que los cambios que hagas en uno no afectan al otro. Los filtros de arriba funcionan localmente sobre los ' + dataForExport.length + ' registro(s) que trae este archivo. Necesita conexión a internet para cargar las librerías de gráficos.</p>');
+  parts.push('</main>');
+  parts.push('<script>');
+  parts.push('const DATA = ' + dataJson + ';');
+  parts.push(EXPORT_JS);
+  parts.push('<' + '/script>');
+  parts.push('</body>');
+  parts.push('</html>');
+  return parts.join('\n');
+}
+
+function chartPanelHtml(id, title, sub){
+  return '  <div class="chart-panel"><h2>' + title + '</h2><div class="sub">' + sub + '</div>' +
+    '<div class="chart-canvas-wrap"><canvas id="' + id + '"></canvas></div></div>';
+}
+
+const EXPORT_CSS = [
+':root{--bg:#0F1318;--panel:#171D25;--panel-2:#1E2630;--border:#2A3340;--text:#E8ECF1;--muted:#8894A3;',
+'--accent:#4FD1C5;--accent-dim:#2C6E68;--warn:#F5A524;--danger:#E5484D;--ok:#3DD68C;--info:#5B8DEF;',
+'--mono:"JetBrains Mono","Courier New",monospace;--sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}',
+'*{box-sizing:border-box;}',
+'body{margin:0;background:radial-gradient(circle at 20% 0%, rgba(79,209,197,.06), transparent 40%),var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;}',
+'.topbar{padding:20px 28px;border-bottom:1px solid var(--border);}',
+'.brand{display:flex;align-items:center;gap:12px;}',
+'.dot{width:10px;height:10px;border-radius:50%;background:var(--accent);flex-shrink:0;}',
+'.brand h1{font-size:15px;margin:0;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600;}',
+'.brand h1 span{color:var(--text);}',
+'.brand h1 .tag{font-size:10px;color:var(--accent);border:1px solid var(--accent-dim);border-radius:20px;padding:2px 8px;text-transform:none;letter-spacing:0;margin-left:8px;vertical-align:middle;}',
+'.brand small{display:block;color:var(--muted);font-size:11px;margin-top:2px;letter-spacing:0;text-transform:none;}',
+'main{padding:24px 28px 60px;max-width:1360px;margin:0 auto;}',
+'.filterbar{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:14px 16px;margin-bottom:16px;}',
+'.filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}',
+'.filters input,.filters select{background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 10px;font-size:13px;font-family:var(--sans);}',
+'.count-info{margin-left:auto;font-size:12px;color:var(--muted);}',
+'.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:22px;}',
+'.stat{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px 18px;}',
+'.stat .n{font-family:var(--mono);font-size:26px;font-weight:700;}',
+'.stat .l{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-top:4px;}',
+'.stat.total .n{color:var(--accent);} .stat.fallido .n{color:var(--danger);} .stat.exitoso .n{color:var(--ok);}',
+'.stat.escalado .n{color:var(--warn);} .stat.tiempo .n{color:var(--info);}',
+'.analysis{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:22px;}',
+'.chart-panel{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:16px 18px;margin-bottom:16px;}',
+'.chart-panel h2{font-size:13px;margin:0 0 4px;color:var(--muted);font-weight:600;letter-spacing:.03em;}',
+'.chart-panel .sub{font-size:11.5px;color:var(--muted);margin-bottom:14px;}',
+'.chart-panel-wide{max-width:none;}',
+'.chart-canvas-wrap{position:relative;height:250px;}',
+'.chart-canvas-wrap-tall{height:320px;}',
+'.panel{background:var(--panel);border:1px solid var(--border);border-radius:14px;overflow:hidden;}',
+'.panel-head{padding:16px 18px;border-bottom:1px solid var(--border);}',
+'.panel-head h2{font-size:14px;margin:0;color:var(--muted);font-weight:600;letter-spacing:.03em;}',
+'table{width:100%;border-collapse:collapse;font-size:13px;}',
+'#tableWrap{overflow-x:auto;}',
+'thead th{text-align:left;padding:10px 12px;font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border);background:var(--panel-2);white-space:nowrap;}',
+'tbody td{padding:11px 12px;border-bottom:1px solid var(--border);vertical-align:top;}',
+'tbody tr:hover{background:rgba(79,209,197,.04);} tbody tr:last-child td{border-bottom:none;}',
+'.cell-desc{max-width:260px;color:var(--muted);font-size:12.5px;}',
+'.badge{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:20px;font-size:11.5px;font-weight:600;white-space:nowrap;}',
+'.badge::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;}',
+'.b-exitoso{background:rgba(61,214,140,.12);color:var(--ok);} .b-fallido{background:rgba(229,72,77,.12);color:var(--danger);}',
+'.b-pendiente{background:rgba(245,165,36,.12);color:var(--warn);} .b-otro{background:rgba(136,148,163,.12);color:var(--muted);}',
+'.esc-si{color:var(--danger);font-weight:700;} .esc-no{color:var(--muted);}',
+'.empty{padding:60px 20px;text-align:center;color:var(--muted);}',
+'.empty b{color:var(--text);display:block;margin-bottom:6px;font-size:15px;}',
+'.hint{font-size:12px;color:var(--muted);margin-top:16px;line-height:1.6;border-top:1px dashed var(--border);padding-top:14px;}',
+'@media (max-width:760px){ .analysis{grid-template-columns:1fr;} thead{display:none;} tbody tr{display:block;border-bottom:6px solid var(--bg);padding:10px 0;}',
+'tbody td{display:flex;justify-content:space-between;gap:10px;border:none;padding:6px 14px;text-align:right;}',
+'tbody td::before{content:attr(data-label);color:var(--muted);font-size:11px;text-transform:uppercase;text-align:left;} }',
+].join('\n');
+
+const EXPORT_JS = [
+'(function(){',
+'  var el = function(id){ return document.getElementById(id); };',
+'  function escapeHtml(str){ var d=document.createElement("div"); d.textContent = str==null?"":String(str); return d.innerHTML; }',
+'  function estadoClass(estado){ if(estado==="Exitoso") return "b-exitoso"; if(estado==="Fallido") return "b-fallido"; if(estado==="Pendiente") return "b-pendiente"; return "b-otro"; }',
+'  function debounce(fn, wait){ var t; return function(){ var args=arguments, ctx=this; clearTimeout(t); t=setTimeout(function(){ fn.apply(ctx,args); }, wait); }; }',
+'  if(typeof ChartDataLabels !== "undefined"){ Chart.register(ChartDataLabels); }',
+'',
+'  function uniqueValues(field){',
+'    var set = {}; var out = [];',
+'    DATA.forEach(function(r){ var v=r[field]; if(v && !set[v]){ set[v]=true; out.push(v); } });',
+'    return out.sort(function(a,b){ return String(a).localeCompare(String(b),"es"); });',
+'  }',
+'',
+'  function refreshFilterOptions(){',
+'    var tipoSel = el("filterTipo"), origenSel = el("filterOrigen");',
+'    var curTipo = tipoSel.value, curOrigen = origenSel.value;',
+'    tipoSel.innerHTML = "<option value=\\"\\">Todos los tipos</option>" + uniqueValues("tipo").map(function(t){ return "<option value=\\""+escapeHtml(t)+"\\">"+escapeHtml(t)+"</option>"; }).join("");',
+'    origenSel.innerHTML = "<option value=\\"\\">Todos los archivos</option>" + uniqueValues("origen").map(function(o){ return "<option value=\\""+escapeHtml(o)+"\\">"+escapeHtml(o)+"</option>"; }).join("");',
+'    tipoSel.value = curTipo; origenSel.value = curOrigen;',
+'  }',
+'',
+'  function getFiltered(){',
+'    var search = el("search").value.trim().toLowerCase();',
+'    var fEstado = el("filterEstado").value, fTipo = el("filterTipo").value, fOrigen = el("filterOrigen").value;',
+'    return DATA.filter(function(r){',
+'      var matchSearch = !search || [r.proceso,r.servidor,r.responsable].join(" ").toLowerCase().indexOf(search) !== -1;',
+'      var matchEstado = !fEstado || r.estado===fEstado;',
+'      var matchTipo = !fTipo || r.tipo===fTipo;',
+'      var matchOrigen = !fOrigen || r.origen===fOrigen;',
+'      return matchSearch && matchEstado && matchTipo && matchOrigen;',
+'    });',
+'  }',
+'',
+'  function statCard(cls,label,value){ return "<div class=\\"stat "+cls+"\\"><div class=\\"n\\">"+value+"</div><div class=\\"l\\">"+label+"</div></div>"; }',
+'  function renderStats(list){',
+'    var total = list.length;',
+'    var fallidos = list.filter(function(r){return r.estado==="Fallido";}).length;',
+'    var exitosos = list.filter(function(r){return r.estado==="Exitoso";}).length;',
+'    var escalados = list.filter(function(r){return r.escalamiento==="Sí";}).length;',
+'    var tiempos = list.map(function(r){return r.tiempo;}).filter(function(t){return typeof t==="number";});',
+'    var promedio = tiempos.length ? Math.round(tiempos.reduce(function(a,b){return a+b;},0)/tiempos.length) : 0;',
+'    el("stats").innerHTML = statCard("total","Total registros",total) + statCard("fallido","Fallidos",fallidos) + statCard("exitoso","Exitosos",exitosos) + statCard("escalado","Con escalamiento",escalados) + statCard("tiempo","Tiempo promedio (min)",promedio);',
+'  }',
+'',
+'  var chartInstances = {};',
+'  function drawBar(id, items, color, suffix){',
+'    var canvas = el(id);',
+'    if(chartInstances[id]){ chartInstances[id].destroy(); chartInstances[id]=null; }',
+'    if(!items.length){ canvas.style.display="none"; return; }',
+'    canvas.style.display="block";',
+'    var labels = items.map(function(i){return i.label;}), data = items.map(function(i){return i.value;});',
+'    chartInstances[id] = new Chart(canvas.getContext("2d"), { type:"bar",',
+'      data:{ labels:labels, datasets:[{ data:data, backgroundColor:color, borderRadius:4, maxBarThickness:30 }] },',
+'      options:{ animation:false, indexAxis:"y", maintainAspectRatio:false,',
+'        plugins:{ legend:{display:false}, datalabels:{ color:"#E8ECF1", font:{size:10,weight:"600"}, formatter:function(v){ return v===0?"":v+(suffix||""); } } },',
+'        scales:{ x:{ ticks:{color:"#8894A3"}, grid:{color:"#2A3340"} }, y:{ ticks:{color:"#8894A3"}, grid:{color:"transparent"} } }',
+'      }',
+'    });',
+'  }',
+'',
+'  function drawGrouped(id, categories, series){',
+'    var canvas = el(id);',
+'    if(chartInstances[id]){ chartInstances[id].destroy(); chartInstances[id]=null; }',
+'    var hasData = categories.length && series.some(function(s){ return s.data.some(function(v){ return v>0; }); });',
+'    if(!hasData){ canvas.style.display="none"; return; }',
+'    canvas.style.display="block";',
+'    var colors = ["#5B8DEF","#1F3A93"];',
+'    chartInstances[id] = new Chart(canvas.getContext("2d"), { type:"bar",',
+'      data:{ labels:categories, datasets: series.map(function(s,i){ return { label:s.name, data:s.data, backgroundColor: colors[i%colors.length], borderRadius:3, maxBarThickness:26 }; }) },',
+'      options:{ animation:false, maintainAspectRatio:false,',
+'        plugins:{ legend:{display:true,position:"top",align:"end",labels:{color:"#E8ECF1",boxWidth:11,font:{size:10.5}}}, datalabels:{ color:"#E8ECF1", font:{size:10,weight:"600"}, formatter:function(v){ return v===0?"":v; } } },',
+'        scales:{ x:{ ticks:{color:"#8894A3",font:{size:10}}, grid:{color:"transparent"} }, y:{ ticks:{color:"#8894A3",font:{size:10}}, grid:{color:"#2A3340"} } }',
+'      }',
+'    });',
+'  }',
+'',
+'  function renderCharts(list){',
+'    var porServicio = {};',
+'    list.forEach(function(r){ if(r.proceso) porServicio[r.proceso]=(porServicio[r.proceso]||0)+1; });',
+'    var itemsServicio = Object.keys(porServicio).map(function(k){ return {label:k, value:porServicio[k]}; }).sort(function(a,b){return b.value-a.value;}).slice(0,10);',
+'    drawBar("chartServicio", itemsServicio, "#4FD1C5");',
+'',
+'    var porAmbiente = {};',
+'    list.forEach(function(r){ if(r.servidor) porAmbiente[r.servidor]=(porAmbiente[r.servidor]||0)+1; });',
+'    var itemsAmbiente = Object.keys(porAmbiente).map(function(k){ return {label:k, value:porAmbiente[k]}; }).sort(function(a,b){return b.value-a.value;});',
+'    drawBar("chartAmbiente", itemsAmbiente, "#5B8DEF");',
+'',
+'    var porTipo = {}, progSet = {}, progList0 = [];',
+'    list.filter(function(r){return r.tipo;}).forEach(function(r){',
+'      var prog = r.programado || "No especificado";',
+'      if(!progSet[prog]){ progSet[prog]=true; progList0.push(prog); }',
+'      if(!porTipo[r.tipo]) porTipo[r.tipo] = {};',
+'      porTipo[r.tipo][prog] = (porTipo[r.tipo][prog]||0) + 1;',
+'    });',
+'    var categories = Object.keys(porTipo).sort(function(a,b){',
+'      var ta=0,tb=0; Object.keys(porTipo[a]).forEach(function(k){ta+=porTipo[a][k];}); Object.keys(porTipo[b]).forEach(function(k){tb+=porTipo[b][k];});',
+'      return tb-ta;',
+'    });',
+'    var order = ["No Programado","Programado"];',
+'    progList0.sort(function(a,b){',
+'      var ia=order.indexOf(a), ib=order.indexOf(b);',
+'      if(ia===-1 && ib===-1) return a.localeCompare(b,"es");',
+'      if(ia===-1) return 1; if(ib===-1) return -1;',
+'      return ia-ib;',
+'    });',
+'    var series = progList0.map(function(p){ return { name:p, data: categories.map(function(c){ return (porTipo[c][p]||0); }) }; });',
+'    drawGrouped("chartTipoSolicitud", categories, series);',
+'  }',
+'',
+'  function renderTable(list){',
+'    if(!list.length){ el("tableWrap").innerHTML = "<div class=\\"empty\\"><b>Sin resultados</b>Ajusta los filtros de arriba.</div>"; return; }',
+'    var rows = list.map(function(r){',
+'      return "<tr>" +',
+'        "<td data-label=\\"Fecha\\">"+escapeHtml(r.fecha||"—")+"</td>" +',
+'        "<td data-label=\\"Proceso\\">"+escapeHtml(r.proceso)+"</td>" +',
+'        "<td data-label=\\"Servidor\\">"+escapeHtml(r.servidor||"—")+"</td>" +',
+'        "<td data-label=\\"Responsable\\">"+escapeHtml(r.responsable||"—")+"</td>" +',
+'        "<td data-label=\\"Tipo\\">"+escapeHtml(r.tipo||"—")+"</td>" +',
+'        "<td data-label=\\"Estado\\"><span class=\\"badge "+estadoClass(r.estado)+"\\">"+escapeHtml(r.estado)+"</span></td>" +',
+'        "<td data-label=\\"Escal.\\" class=\\""+(r.escalamiento==="Sí"?"esc-si":"esc-no")+"\\">"+escapeHtml(r.escalamiento||"No")+"</td>" +',
+'        "<td data-label=\\"Tiempo\\">"+(r.tiempo!==""&&r.tiempo!=null ? r.tiempo+" min" : "—")+"</td>" +',
+'        "<td data-label=\\"Info. adicional\\" class=\\"cell-desc\\">"+escapeHtml(r.extra||"—")+"</td>" +',
+'      "</tr>";',
+'    }).join("");',
+'    el("tableWrap").innerHTML = "<table><thead><tr><th>Fecha</th><th>Proceso/Job</th><th>Servidor</th><th>Responsable</th><th>Tipo</th><th>Estado</th><th>Escal.</th><th>Tiempo</th><th>Info. adicional</th></tr></thead><tbody>"+rows+"</tbody></table>";',
+'  }',
+'',
+'  function update(){',
+'    var list = getFiltered();',
+'    renderStats(list);',
+'    renderCharts(list);',
+'    renderTable(list);',
+'    el("countInfo").textContent = list.length + " de " + DATA.length + " registros";',
+'  }',
+'',
+'  refreshFilterOptions();',
+'  el("search").addEventListener("input", debounce(update, 200));',
+'  ["filterEstado","filterTipo","filterOrigen"].forEach(function(id){ el(id).addEventListener("change", update); });',
+'  update();',
+'})();',
+].join('\n');
+
 // --- Helpers de actividades para el informe (agrupan por etiqueta limpia,
 // igual que el gráfico, para que "SCRIPT" de distintos meses/hojas se
 // trate como una sola actividad aunque el encabezado original varíe un
